@@ -1,0 +1,40 @@
+[theme]
+base = "dark"
+primaryColor = "#4DE8F3"
+backgroundColor = "#070C11"
+secondaryBackgroundColor = "#0C151E"
+textColor = "#DDF2F5"
+linkColor = "#72EDF5"
+codeTextColor = "#C9F7FA"
+codeBackgroundColor = "#09131B"
+borderColor = "#1B3946"
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "2px"
+buttonRadius = "2px"
+font = "Bahnschrift"
+headingFont = "Bahnschrift"
+codeFont = "Cascadia Code"
+baseFontSize = 15
+baseFontWeight = 400
+codeFontSize = "13px"
+headingFontSizes = ["42px", "30px", "22px", "18px", "15px", "13px"]
+headingFontWeights = [600, 600, 600, 600, 500, 500]
+linkUnderline = false
+
+greenColor = "#61F2C2"
+orangeColor = "#FFB454"
+redColor = "#FF6B7A"
+blueColor = "#55DDF0"
+grayColor = "#78909C"
+
+[theme.sidebar]
+backgroundColor = "#05090D"
+secondaryBackgroundColor = "#0A1219"
+codeBackgroundColor = "#081016"
+textColor = "#C9E7EC"
+borderColor = "#16323E"
+primaryColor = "#4DE8F3"
+
+[server]
+maxUploadSize = 50
