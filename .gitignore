@@ -25,7 +25,6 @@ venv/
 chat_history/
 chroma_db/
 md5_text
-$null
 *.log
 
 # 系统文件

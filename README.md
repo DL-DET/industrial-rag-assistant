@@ -124,6 +124,10 @@ streamlit run app.py
 修改 `MAX_UPLOAD_SIZE_MB` 时，请同步调整 `.streamlit/config.toml` 中的
 `maxUploadSize`，避免上传框提示与后端校验不一致。
 
+服务默认只监听本机 `127.0.0.1`。如需局域网访问，将 `.streamlit/config.toml`
+中的 `server.address` 改为 `0.0.0.0`，或在启动时加
+`--server.address 0.0.0.0`，并确认网络环境可信。
+
 模型调用会产生费用，请根据自己的百炼账户额度控制使用量。
 
 ## 测试

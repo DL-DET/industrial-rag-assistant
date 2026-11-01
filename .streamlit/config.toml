@@ -38,3 +38,4 @@ primaryColor = "#D9551C"
 
 [server]
 maxUploadSize = 10
+address = "127.0.0.1"
