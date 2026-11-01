@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Iterator
 
 from langchain_community.chat_models.tongyi import ChatTongyi
@@ -16,12 +17,28 @@ from file_history_store import get_history
 from vector_stores import VectorStoreService
 
 
+PAGE_MARKER_PATTERN = re.compile(r"\[第\s*(\d+)\s*页\]")
+
+
+def resolve_page_number(document: Document) -> int | None:
+    """优先读取 metadata 页码；旧数据没有 metadata 时回退解析正文页码标记。"""
+    page = document.metadata.get("page")
+    if page is not None:
+        try:
+            return int(page)
+        except (TypeError, ValueError):
+            pass
+
+    match = PAGE_MARKER_PATTERN.search(document.page_content)
+    return int(match.group(1)) if match else None
+
+
 def format_documents(documents: Iterable[Document]) -> str:
     """把检索结果整理为带来源信息的上下文。"""
     formatted_documents: list[str] = []
     for index, document in enumerate(documents, start=1):
         source = document.metadata.get("source", "未知来源")
-        page = document.metadata.get("page")
+        page = resolve_page_number(document)
         page_text = f"，第 {page} 页" if page is not None else ""
         formatted_documents.append(
             f"[资料 {index}] 来源：{source}{page_text}\n{document.page_content}"

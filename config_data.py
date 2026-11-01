@@ -69,3 +69,11 @@ chat_model_name = os.getenv("CHAT_MODEL_NAME", "qwen-max")
 
 # 上传限制
 max_upload_size_mb = _read_positive_int("MAX_UPLOAD_SIZE_MB", 10)
+
+
+def runtime_readiness() -> dict[str, bool]:
+    """返回本地运行条件，供界面显示真实状态而不是写死的“在线”。"""
+    return {
+        "api_key": bool(os.getenv("DASHSCOPE_API_KEY", "").strip()),
+        "vector_store": persist_directory.exists(),
+    }
