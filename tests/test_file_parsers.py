@@ -40,6 +40,26 @@ def test_unsupported_file_type_raises_error():
         extract_text_from_upload("设备.csv", b"a,b")
 
 
+def test_empty_file_raises_error():
+    with pytest.raises(ValueError, match="文件内容为空"):
+        extract_text_from_upload("空文件.txt", b"")
+
+
+def test_fake_pdf_signature_is_rejected():
+    with pytest.raises(ValueError, match="PDF"):
+        extract_text_from_upload("伪装.pdf", b"not a pdf")
+
+
+def test_fake_docx_signature_is_rejected():
+    with pytest.raises(ValueError, match="DOCX"):
+        extract_text_from_upload("伪装.docx", b"not a zip")
+
+
+def test_binary_text_file_is_rejected():
+    with pytest.raises(ValueError, match="纯文本"):
+        extract_text_from_upload("伪装.txt", b"abc\x00def")
+
+
 def test_empty_text_file_raises_error():
     with pytest.raises(ValueError, match="未从文件中提取到文本"):
         extract_text_from_upload("空文件.txt", b"   ")

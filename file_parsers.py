@@ -46,10 +46,27 @@ def extract_docx_text(data: bytes) -> str:
     return "\n".join(block for block in blocks if block)
 
 
+def validate_file_signature(suffix: str, data: bytes) -> None:
+    """校验基本文件头，避免仅改扩展名的非目标文件进入解析器。"""
+    if not data:
+        raise ValueError("文件内容为空")
+
+    if suffix == ".pdf" and b"%PDF-" not in data[:1024]:
+        raise ValueError("文件内容不是有效的 PDF（缺少 %PDF 文件头）")
+
+    if suffix == ".docx" and not data.startswith(b"PK"):
+        raise ValueError("文件内容不是有效的 DOCX（缺少 ZIP 文件头）")
+
+    if suffix == ".txt" and b"\x00" in data:
+        raise ValueError("文件内容包含二进制字符，请上传纯文本文件")
+
+
 def extract_text_from_upload(filename: str, data: bytes) -> str:
     suffix = "." + filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
     if suffix not in SUPPORTED_EXTENSIONS:
         raise ValueError(f"不支持的文件类型：{suffix or '未知'}")
+
+    validate_file_signature(suffix, data)
 
     if suffix == ".txt":
         text = decode_text_file(data)

@@ -1,4 +1,5 @@
 from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, HumanMessage
 
 import rag as rag_module
 from file_history_store import FileChatMessageHistory
@@ -57,6 +58,32 @@ def test_format_documents_uses_content_page_marker_fallback():
     )
 
     assert "第 5 页" in formatted
+
+
+def test_stream_answer_limits_history_window(tmp_path, monkeypatch):
+    history = FileChatMessageHistory("user_005", tmp_path)
+    history.add_messages(
+        [
+            HumanMessage(content="第一轮"),
+            AIMessage(content="第一次回答"),
+            HumanMessage(content="第二轮"),
+        ]
+    )
+    monkeypatch.setattr(rag_module, "get_history", lambda session_id: history)
+    monkeypatch.setattr(rag_module.config, "max_history_messages", 2)
+
+    class FakeChain:
+        def stream(self, inputs):
+            assert [message.content for message in inputs["history"]] == [
+                "第一次回答",
+                "第二轮",
+            ]
+            yield "第三次回答"
+
+    service = RagService.__new__(RagService)
+    service.answer_chain = FakeChain()
+
+    assert list(service.stream_answer("第三轮", "user_005", [])) == ["第三次回答"]
 
 
 def test_stream_answer_saves_history_after_complete_response(tmp_path, monkeypatch):

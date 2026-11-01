@@ -64,6 +64,7 @@ max_split_char_number = _read_positive_int("MAX_SPLIT_CHAR_NUMBER", 1000)
 
 # 检索与模型配置
 retrieval_top_k = _read_positive_int("RETRIEVAL_TOP_K", 3)
+max_history_messages = _read_positive_int("MAX_HISTORY_MESSAGES", 20)
 embedding_model_name = os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4")
 chat_model_name = os.getenv("CHAT_MODEL_NAME", "qwen-max")
 

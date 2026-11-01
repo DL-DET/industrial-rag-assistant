@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.documents import Document
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -31,6 +31,11 @@ def resolve_page_number(document: Document) -> int | None:
 
     match = PAGE_MARKER_PATTERN.search(document.page_content)
     return int(match.group(1)) if match else None
+
+
+def recent_history(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
+    """只保留最近若干条历史消息，避免多轮对话无限撑大 Prompt。"""
+    return list(messages[-config.max_history_messages :])
 
 
 def format_documents(documents: Iterable[Document]) -> str:
@@ -94,7 +99,7 @@ class RagService:
             {
                 "input": question,
                 "context": format_documents(documents),
-                "history": history.messages,
+                "history": recent_history(history.messages),
             }
         )
 
@@ -125,7 +130,7 @@ class RagService:
             {
                 "input": question,
                 "context": format_documents(documents),
-                "history": history.messages,
+                "history": recent_history(history.messages),
             }
         )
         if answer.strip():

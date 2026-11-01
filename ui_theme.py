@@ -22,13 +22,14 @@ _GLOBAL_STYLES = """
     --bp-ink: #12314f;
     --bp-ink-deep: #0a2237;
     --bp-ink-soft: #3d5a72;
-    --bp-muted: #77848c;
+    --bp-muted: #5f6b73;
     --bp-line: rgba(18, 49, 79, 0.22);
     --bp-line-strong: rgba(18, 49, 79, 0.42);
     --bp-grid: rgba(18, 49, 79, 0.055);
     --bp-grid-major: rgba(18, 49, 79, 0.09);
     --bp-accent: #d9551c;
     --bp-accent-deep: #b4470f;
+    --bp-accent-dark: #96370a;
     --bp-accent-soft: rgba(217, 85, 28, 0.08);
     --bp-ok: #2f6b4f;
     --bp-ok-soft: rgba(47, 107, 79, 0.08);
@@ -321,7 +322,7 @@ header[data-testid="stHeader"] {
 }
 
 .bp-kicker {
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
     font-family: var(--bp-mono);
     font-size: 0.6rem;
     letter-spacing: 0.16em;
@@ -554,7 +555,7 @@ header[data-testid="stHeader"] {
 
 .bp-msg-label.user {
     border-color: rgba(217, 85, 28, 0.42);
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
 }
 
 [data-testid="stChatMessageAvatarCustom"],
@@ -660,7 +661,7 @@ header[data-testid="stHeader"] {
     height: 28px;
     place-items: center;
     border: 1px solid rgba(217, 85, 28, 0.4);
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
     font-family: var(--bp-mono);
     font-size: 0.66rem;
 }
@@ -784,7 +785,7 @@ header[data-testid="stHeader"] {
 
 [data-testid="stChatInput"] button:hover {
     background: var(--bp-accent-soft);
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
 }
 
 /* ---------- 通用按钮 ---------- */
@@ -819,30 +820,30 @@ header[data-testid="stHeader"] {
 }
 
 .st-key-ingest_file button {
-    border-color: var(--bp-accent);
-    background: var(--bp-accent);
-    box-shadow: 3px 3px 0 rgba(217, 85, 28, 0.24);
+    border-color: var(--bp-accent-deep);
+    background: var(--bp-accent-deep);
+    box-shadow: 3px 3px 0 rgba(180, 71, 15, 0.24);
     color: #fff9f0;
     font-weight: 700;
 }
 
 .st-key-ingest_file button:hover {
-    border-color: var(--bp-accent-deep);
-    background: var(--bp-accent-deep);
-    box-shadow: 4px 4px 0 rgba(180, 71, 15, 0.28);
+    border-color: var(--bp-accent-dark);
+    background: var(--bp-accent-dark);
+    box-shadow: 4px 4px 0 rgba(150, 55, 10, 0.28);
     color: #fff9f0;
 }
 
 .st-key-clear_chat button {
-    border-color: rgba(217, 85, 28, 0.55);
+    border-color: rgba(180, 71, 15, 0.55);
     background: transparent;
     box-shadow: none;
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
 }
 
 .st-key-clear_chat button:hover {
-    border-color: var(--bp-accent);
-    background: var(--bp-accent);
+    border-color: var(--bp-accent-deep);
+    background: var(--bp-accent-deep);
     color: #fff9f0;
 }
 
@@ -874,8 +875,8 @@ header[data-testid="stHeader"] {
 }
 
 [data-testid="stFileUploaderDropzone"] button:hover {
-    border-color: var(--bp-accent);
-    background: var(--bp-accent);
+    border-color: var(--bp-accent-deep);
+    background: var(--bp-accent-deep);
 }
 
 [data-testid="stFileUploaderDropzoneInstructions"],
@@ -896,7 +897,7 @@ header[data-testid="stHeader"] {
 }
 
 .bp-upload-hint span:first-child {
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
     font-family: var(--bp-mono);
     font-size: 0.56rem;
     letter-spacing: 0.16em;
@@ -967,12 +968,12 @@ header[data-testid="stHeader"] {
 }
 
 .bp-step.is-active .bp-step-idx {
-    border-color: var(--bp-accent);
-    color: var(--bp-accent);
+    border-color: var(--bp-accent-deep);
+    color: var(--bp-accent-deep);
 }
 
 .bp-step.is-active .bp-step-label {
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
     font-weight: 600;
 }
 
@@ -1000,7 +1001,7 @@ header[data-testid="stHeader"] {
 }
 
 .bp-file-status {
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
 }
 
 .bp-file-name {
@@ -1085,7 +1086,7 @@ header[data-testid="stHeader"] {
 }
 
 .bp-notice.warning .bp-notice-label {
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
 }
 
 /* ---------- 原生组件兜底 ---------- */
@@ -1104,7 +1105,7 @@ header[data-testid="stHeader"] {
 }
 
 [data-testid="stExpander"] summary:hover {
-    color: var(--bp-accent);
+    color: var(--bp-accent-deep);
 }
 
 [data-testid="stAlert"] {

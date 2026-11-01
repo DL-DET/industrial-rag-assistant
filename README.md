@@ -14,6 +14,7 @@
 ## 功能
 
 - 支持 TXT、PDF、DOCX 文档入库
+- 上传时校验扩展名与基本文件头，降低伪装文件风险
 - 按内容 MD5 自动去重，避免重复写入相同资料
 - 使用 DashScope `text-embedding-v4` 生成向量
 - 使用 Chroma 持久化本地向量库
@@ -117,6 +118,7 @@ streamlit run app.py
 | `CHAT_MODEL_NAME` | `qwen-max` | 回答模型 |
 | `EMBEDDING_MODEL_NAME` | `text-embedding-v4` | 向量模型 |
 | `RETRIEVAL_TOP_K` | `3` | 每次检索返回的片段数 |
+| `MAX_HISTORY_MESSAGES` | `20` | 进入 Prompt 的最近消息条数 |
 | `CHUNK_SIZE` | `300` | 文本分块长度 |
 | `CHUNK_OVERLAP` | `50` | 分块重叠长度 |
 | `MAX_UPLOAD_SIZE_MB` | `10` | 应用层单文件大小限制 |
@@ -149,7 +151,7 @@ python -m pytest -q
 - **会话隔离**：Streamlit 为每个浏览器会话生成随机 ID，历史文件不接受路径字符。
 - **原子写入**：聊天历史先写入临时文件再替换目标文件，降低文件损坏概率。
 - **资料不足回退**：Prompt 明确要求在缺少依据时拒绝编造，页面同时展示引证资料与页码。
-- **上传保护**：应用检查扩展名和文件大小；扫描版 PDF 没有文本时会提示先做 OCR。
+- **上传保护**：应用检查扩展名、基本文件头和文件大小；扫描版 PDF 没有文本时会提示先做 OCR。
 
 ## 已知限制
 
