@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 
 import config_data as config
 
@@ -21,6 +22,17 @@ class VectorStoreService:
         """返回可直接接入 LangChain 链路的向量检索器。"""
         return self.vector_store.as_retriever(
             search_kwargs={"k": config.retrieval_top_k}
+        )
+
+    def search_with_scores(
+        self,
+        query: str,
+        k: int | None = None,
+    ) -> list[tuple[Document, float]]:
+        """返回 (文档, 相关性分数)，供评测、阈值实验和 trace 使用。"""
+        return self.vector_store.similarity_search_with_relevance_scores(
+            query,
+            k=k or config.retrieval_top_k,
         )
 
 

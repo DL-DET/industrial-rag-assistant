@@ -24,6 +24,37 @@
 - 资料不足时明确拒答，不编造设备参数或检修步骤
 - 文件解析、会话隔离、去重逻辑和上下文格式化包含自动化测试
 
+## 评测基线
+
+当前使用 41 条评测集（30 条有答案 + 11 条无答案，含 1 条 hard negative），检索深度 top-10：
+
+| 指标 | 数值 |
+| --- | --- |
+| recall@1 | 0.633 |
+| recall@3 | 0.967 |
+| recall@5 | 1.000 |
+| MRR | 0.773 |
+| P50 检索延迟 | 155 ms（单次测量） |
+| P95 检索延迟 | 400 ms（单次测量） |
+
+相关性判定为「来源文件匹配 + 全部 gold 关键词命中」，兼容同一资料同时存在
+DOCX 与 PDF 的情况。
+
+基线暴露了三个真实问题：
+
+1. PDF 目录页和“使用建议”片段会进入 Top-1，拉低 `recall@1` 与 MRR
+2. DOCX/PDF 重复语料让长 chunk 占优，需要按内容去重或来源过滤
+3. 有答案与无答案的 Top-1 分数重叠（0.487 vs 0.678），单靠阈值无法稳定拒答
+4. 新增 hard negative“机械密封安装扭矩”的 Top-1 分数为 0.581，已接近有答案题，进一步说明阈值不能同时做到不误杀和不漏拒
+
+复现：
+
+```bash
+python -m eval.run_eval
+```
+
+详细报告见 `eval/report.md`。
+
 ## 架构
 
 ```mermaid
@@ -54,6 +85,7 @@ flowchart LR
 ├── file_history_store.py   # 本地会话历史
 ├── config_data.py          # 环境变量和路径配置
 ├── data/                   # 示例知识库原始资料
+├── eval/                   # 评测集、检索指标与基线报告
 ├── docs/                   # README 界面预览
 └── tests/                  # 自动化测试
 ```
@@ -140,7 +172,13 @@ python -m pytest -q
 ```
 
 测试不需要调用模型 API，覆盖文本编码、PDF/DOCX 解析、会话 ID 校验、历史读写、
-内容去重、RAG 上下文格式化，以及问答页和上传页的 Streamlit 启动。
+内容去重、RAG 上下文格式化、评测指标，以及问答页和上传页的 Streamlit 启动。
+
+检索基线评测需要调用 Embedding API：
+
+```powershell
+python -m eval.run_eval
+```
 
 仓库包含 GitHub Actions 工作流，在推送和拉取请求时使用 Python 3.11 与 3.13
 执行编译和测试。
