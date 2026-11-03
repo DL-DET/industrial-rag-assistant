@@ -37,6 +37,9 @@ python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_rerank 
 `dataset_dedup.jsonl` 是同一批题目的去重版本：`gold_sources` 只保留 PDF，
 用于验证“去掉重复 DOCX 后指标是否仍然成立”。
 
+`dataset_conveyor.jsonl` 是新增带式输送机 DOCX 的覆盖评测：8 条有答案 +
+2 条无答案，用于验证新资料是否可检索、可回答，以及重排对无答案分数的区分度。
+
 字段：
 
 | 字段 | 说明 |
