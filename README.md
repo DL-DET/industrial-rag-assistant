@@ -21,10 +21,12 @@
 - 使用通义千问 `qwen-max` 进行流式问答
 - 每个浏览器会话使用独立 ID，避免用户之间串用聊天记录
 - PDF 页码写入向量元数据，回答页面展示引证资料、页码与片段摘录
+- 先向量召回 top-10，再用 `gte-rerank-v2` 重排到 top-3，重排失败自动回退
+- 41 条评测集支持 recall@1/3/5、MRR 与延迟统计，报告可复现
 - 资料不足时明确拒答，不编造设备参数或检修步骤
-- 文件解析、会话隔离、去重逻辑和上下文格式化包含自动化测试
+- 文件解析、会话隔离、去重逻辑、重排降级和上下文格式化包含自动化测试
 
-## 评测基线
+## 评测基线（原始语料）
 
 当前使用 41 条评测集（30 条有答案 + 11 条无答案，含 1 条 hard negative），检索深度 top-10：
 
@@ -37,10 +39,13 @@
 | P50 检索延迟 | 155 ms（单次测量） |
 | P95 检索延迟 | 400 ms（单次测量） |
 
-相关性判定为「来源文件匹配 + 全部 gold 关键词命中」，兼容同一资料同时存在
-DOCX 与 PDF 的情况。
+> 这组数字来自“DOCX 与 PDF 内容重复”的原始语料，指标偏乐观；
+> 去重后的结果见下文「语料去重实验」。
 
-基线暴露了三个真实问题：
+相关性判定为「来源文件匹配 + 全部 gold 关键词命中」，匹配前会去掉空白字符，
+避免 PDF 换行把关键词拆开。
+
+基线暴露了四个真实问题：
 
 1. PDF 目录页和“使用建议”片段会进入 Top-1，拉低 `recall@1` 与 MRR
 2. DOCX/PDF 重复语料让长 chunk 占优，需要按内容去重或来源过滤
@@ -55,6 +60,73 @@ python -m eval.run_eval
 
 详细报告见 `eval/report.md`。
 
+### 重排实验（原始重复语料）
+
+在基线库上先召回 top-10，再用 `gte-rerank-v2` 重排：
+
+| 指标 | 纯向量 | 向量 + 重排 |
+| --- | --- | --- |
+| recall@1 | 0.633 | **0.800** |
+| recall@3 | 0.967 | **1.000** |
+| MRR | 0.773 | **0.883** |
+| P50 检索延迟 | 155 ms | 298 ms |
+| P95 检索延迟 | 400 ms | 408 ms |
+
+重排把 q06、q07、q08 等从第 3–5 名提升到第 1 名，说明问题确实在排序而不是召回。
+代价是 P50 增加约 140 ms；P95 为单次测量，需多次运行确认。
+
+复现：
+
+```bash
+python -m eval.run_eval --rerank
+```
+
+### 语料去重实验
+
+原始 DOCX 与 PDF 内容重复，会把指标抬高。为此把旧 DOCX 归档到
+`data/archive/`，新增一份与 PDF 不重复的带式输送机资料，并用
+PDF + 新 DOCX 建立独立向量库 `chroma_db_dedup`。
+
+评测集仍为原来的 41 条，但 `gold_sources` 只保留 PDF，因为新 DOCX 不再
+包含这些题的答案。这样可以直接观察“去掉重复来源”对指标的影响。
+
+| 指标 | 去重纯向量 | 去重 + 重排 |
+| --- | --- | --- |
+| recall@1 | 0.467 | **0.667** |
+| recall@3 | 0.933 | 0.933 |
+| recall@5 | 1.000 | 1.000 |
+| MRR | 0.700 | **0.811** |
+| P50 检索延迟 | 159 ms | 304 ms |
+
+结论：
+
+1. 去掉重复 DOCX 后，纯向量 `recall@1` 从 0.633 降到 0.467，说明重复语料确实让指标偏乐观。
+2. 重排在干净语料上仍把 `recall@1` 提升 20pp、MRR 从 0.700 提升到 0.811。
+3. `recall@3` 仍为 0.933，q07/q09 的相关片段稳定在第 4，说明重排解决排序，不解决候选噪声或召回缺口。
+4. 实验中发现并修复了评测脚本的假阴性：PDF 会在关键词中间插入换行，匹配前需要去掉空白字符。
+
+复现：
+
+```bash
+python scripts/build_eval_corpus.py \
+  --persist-dir chroma_db_dedup \
+  --collection rag_dedup \
+  --md5-path md5_text_dedup \
+  data/工业设备RAG知识库文本资料汇编.pdf \
+  data/工业设备RAG知识库补充资料_带式输送机.docx
+
+CHROMA_PERSIST_DIRECTORY=chroma_db_dedup \
+CHROMA_COLLECTION_NAME=rag_dedup \
+python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_baseline
+
+CHROMA_PERSIST_DIRECTORY=chroma_db_dedup \
+CHROMA_COLLECTION_NAME=rag_dedup \
+python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_rerank --rerank
+```
+
+当前本地 `.env` 已指向 `chroma_db_dedup` / `rag_dedup`；原始 `chroma_db` 保留，
+用于复现旧指标和对比实验。
+
 ## 架构
 
 ```mermaid
@@ -63,9 +135,10 @@ flowchart LR
     B --> C[内容指纹去重]
     C --> D[DashScope Embedding]
     D --> E[(Chroma 向量库)]
-    F[用户问题] --> G[Top-K 相似度检索]
+    F[用户问题] --> G[向量召回 Top-10]
     E --> G
-    G --> H[上下文 + 会话历史]
+    G --> R[gte-rerank-v2 重排]
+    R --> H[上下文 + 会话历史]
     H --> I[通义千问]
     I --> J[流式答案 + 来源]
 ```
@@ -81,11 +154,14 @@ flowchart LR
 ├── file_parsers.py         # TXT / PDF / DOCX 文本提取
 ├── knowledge_base.py       # 文档分块、向量化和去重
 ├── rag.py                  # 检索、Prompt、模型与流式链路
+├── rerank.py               # DashScope 文本重排
 ├── vector_stores.py        # Chroma 向量库适配
 ├── file_history_store.py   # 本地会话历史
 ├── config_data.py          # 环境变量和路径配置
 ├── data/                   # 示例知识库原始资料
+│   └── archive/            # 旧版重复 DOCX，保留用于复现实验
 ├── eval/                   # 评测集、检索指标与基线报告
+├── scripts/                # 独立评测语料构建脚本
 ├── docs/                   # README 界面预览
 └── tests/                  # 自动化测试
 ```
@@ -149,10 +225,15 @@ streamlit run app.py
 | `DASHSCOPE_API_KEY` | 无 | 必填，阿里云百炼 API Key |
 | `CHAT_MODEL_NAME` | `qwen-max` | 回答模型 |
 | `EMBEDDING_MODEL_NAME` | `text-embedding-v4` | 向量模型 |
-| `RETRIEVAL_TOP_K` | `3` | 每次检索返回的片段数 |
+| `RETRIEVAL_TOP_K` | `3` | 纯向量检索返回的片段数 |
 | `MAX_HISTORY_MESSAGES` | `20` | 进入 Prompt 的最近消息条数 |
+| `RERANK_ENABLED` | `true` | 是否启用重排；失败时自动回退 |
+| `RERANK_MODEL` | `gte-rerank-v2` | 重排模型 |
+| `RERANK_TOP_N` | `3` | 重排后保留的片段数 |
+| `RERANK_CANDIDATE_K` | `10` | 进入重排的候选片段数 |
 | `CHUNK_SIZE` | `300` | 文本分块长度 |
 | `CHUNK_OVERLAP` | `50` | 分块重叠长度 |
+| `MAX_SPLIT_CHAR_NUMBER` | `1000` | 页面超过该长度才调用切块器 |
 | `MAX_UPLOAD_SIZE_MB` | `10` | 应用层单文件大小限制 |
 
 修改 `MAX_UPLOAD_SIZE_MB` 时，请同步调整 `.streamlit/config.toml` 中的
@@ -196,7 +277,9 @@ python -m eval.run_eval
 - 当前是本地单进程演示版，没有登录、权限管理和数据库级会话隔离。
 - Chroma 和聊天历史保存在本地磁盘，不适合直接部署为多实例生产服务。
 - 扫描版 PDF 尚未集成 OCR。
-- 检索只使用向量相似度，没有加入重排序、混合检索和自动评测集。
+- 已接入向量召回 + 重排，但还没有混合检索；去重语料上 q07/q09 仍稳定在第 4，说明召回侧还有缺口。
+- 评测集只有 41 条，且新加入的带式输送机 DOCX 还没有对应题目，结论需要继续扩充样本复验。
+- 新的带式输送机 DOCX 是 RAG 评测用示例资料，不是厂商正式手册，参数不能直接用于现场施工。
 - 修复前入库的历史向量没有 `page` 元数据；页面会尝试从正文的 `[第 N 页]`
   标记回退识别，重新入库可获得完整页码。
 - 当前没有文档级权限控制、Prompt 注入过滤和模型输出内容审核，不应用于处理

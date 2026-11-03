@@ -104,8 +104,18 @@ def render() -> None:
         accent="智能诊断中枢",
         description="从设备知识库检索维护依据，生成可追溯的故障排查与运维回答。",
         metrics=[
-            ("向量引擎 / ENGINE", "本地知识库"),
-            ("检索片段 / TOP-K", f"{config.retrieval_top_k} 条"),
+            (
+                "检索链路 / PIPELINE",
+                "向量召回 + 重排" if config.rerank_enabled else "纯向量检索",
+            ),
+            (
+                "候选片段 / CANDIDATES",
+                (
+                    f"{config.rerank_candidate_k} → {config.rerank_top_n} 条"
+                    if config.rerank_enabled
+                    else f"TOP-{config.retrieval_top_k}"
+                ),
+            ),
             ("回答模型 / MODEL", config.chat_model_name),
         ],
         status="本地链路就绪" if rag_service is not None else "服务未就绪",
@@ -194,7 +204,11 @@ def render() -> None:
                 sources = _document_sources(documents)
                 st.caption(f"命中 {len(documents)} 个知识片段")
                 status.update(
-                    label=f"检索完成，命中 {len(documents)} 个片段",
+                    label=(
+                        f"重排完成，保留 {len(documents)} 个片段"
+                        if config.rerank_enabled
+                        else f"检索完成，命中 {len(documents)} 个片段"
+                    ),
                     state="complete",
                 )
 

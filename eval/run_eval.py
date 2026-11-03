@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import time
 from datetime import datetime
@@ -24,6 +25,7 @@ from eval.metrics import (
     recall_at_k,
     reciprocal_rank,
 )
+from rerank import RerankService
 from vector_stores import VectorStoreService
 
 
@@ -34,13 +36,13 @@ RESULTS_PATH = BASE_DIR / "results.jsonl"
 REPORT_PATH = BASE_DIR / "report.md"
 
 
-def load_dataset() -> list[dict[str, Any]]:
-    if not DATASET_PATH.exists():
-        raise FileNotFoundError(f"评测集不存在：{DATASET_PATH}")
+def load_dataset(dataset_path: Path = DATASET_PATH) -> list[dict[str, Any]]:
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"评测集不存在：{dataset_path}")
 
     items = [
         json.loads(line)
-        for line in DATASET_PATH.read_text(encoding="utf-8").splitlines()
+        for line in dataset_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     if not items:
@@ -60,15 +62,25 @@ def _fmt(value: Any, digits: int = 4) -> str:
     return str(value)
 
 
-def _render_report(summary: dict[str, Any], records: list[dict[str, Any]]) -> str:
+def _render_report(
+    summary: dict[str, Any],
+    records: list[dict[str, Any]],
+    label: str | None = None,
+    rerank: bool = False,
+    dataset_path: Path = DATASET_PATH,
+) -> str:
     lines = [
-        "# RAG 检索基线报告",
+        "# RAG 检索评测报告",
         "",
+        f"- 实验标签：{label or 'baseline'}",
+        f"- 评测集文件：{dataset_path.name}",
         f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 检索策略：{'向量 + 重排' if rerank else '纯向量'}",
+        f"- 重排模型：{config.rerank_model if rerank else '—'}",
         f"- 评测集：{summary['total']} 条（有答案 {summary['answerable']} / 无答案 {summary['unanswerable']}）",
         f"- 评测检索深度：top-{EVAL_TOP_K}",
         "- 相关性判定：来源文件属于 gold 文件，且正文命中全部 gold 关键词",
-        "- 说明：同一资料同时存在 DOCX 与 PDF，关键词匹配避免等价来源被误判",
+        "- 说明：匹配前去除正文和关键词中的空白，避免 PDF 换行导致假阴性",
         "",
         "## 汇总",
         "",
@@ -81,7 +93,7 @@ def _render_report(summary: dict[str, Any], records: list[dict[str, Any]]) -> st
         f"| P50 检索延迟 | {_fmt(summary['latency_p50_ms'], 1)} ms |",
         f"| P95 检索延迟 | {_fmt(summary['latency_p95_ms'], 1)} ms |",
         "",
-        "## Top-1 分数分布（用于 Day 2 阈值）",
+        f"## Top-1 {'重排' if rerank else '相似度'}分数分布（用于阈值）",
         "",
         "| 组 | 平均 | 最小 | 最大 |",
         "| --- | --- | --- | --- |",
@@ -110,16 +122,29 @@ def _render_report(summary: dict[str, Any], records: list[dict[str, Any]]) -> st
     return "\n".join(lines) + "\n"
 
 
-def run() -> dict[str, Any]:
-    items = load_dataset()
+def run(
+    label: str | None = None,
+    rerank: bool = False,
+    dataset_path: Path = DATASET_PATH,
+) -> dict[str, Any]:
+    items = load_dataset(dataset_path)
     service = VectorStoreService(
         DashScopeEmbeddings(model=config.embedding_model_name)
     )
+    reranker = RerankService() if rerank else None
     records: list[dict[str, Any]] = []
+    report_path = BASE_DIR / (f"report_{label}.md" if label else REPORT_PATH.name)
+    results_path = BASE_DIR / (f"results_{label}.jsonl" if label else RESULTS_PATH.name)
 
     for item in items:
         started = time.perf_counter()
         pairs = service.search_with_scores(item["question"], k=EVAL_TOP_K)
+        if reranker is not None:
+            pairs = reranker.rerank(
+                item["question"],
+                [document for document, _ in pairs],
+                top_n=EVAL_TOP_K,
+            )
         latency_ms = (time.perf_counter() - started) * 1000
 
         documents = [document for document, _ in pairs]
@@ -140,6 +165,7 @@ def run() -> dict[str, Any]:
             "top_score": round(scores[0], 4) if scores else None,
             "top_source": top_document.metadata.get("source") if top_document else None,
             "top_page": top_document.metadata.get("page") if top_document else None,
+            "score_kind": "rerank" if rerank else "vector",
             "latency_ms": round(latency_ms, 2),
             "retrieved": [
                 {
@@ -159,19 +185,43 @@ def run() -> dict[str, Any]:
         )
 
     summary = aggregate(records)
-    RESULTS_PATH.write_text(
+    results_path.write_text(
         "\n".join(json.dumps(record, ensure_ascii=False) for record in records),
         encoding="utf-8",
     )
-    REPORT_PATH.write_text(_render_report(summary, records), encoding="utf-8")
+    report_path.write_text(
+        _render_report(summary, records, label, rerank, dataset_path),
+        encoding="utf-8",
+    )
 
     return {
         "summary": summary,
-        "report": str(REPORT_PATH),
-        "results": str(RESULTS_PATH),
+        "report": str(report_path),
+        "results": str(results_path),
     }
 
 
 if __name__ == "__main__":
-    result = run()
+    parser = argparse.ArgumentParser(description="运行 RAG 检索评测")
+    parser.add_argument(
+        "--label",
+        default=None,
+        help="实验标签，例如 split300；不填则写入基线 report.md",
+    )
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="在向量召回 top-10 后使用 DashScope 重排",
+    )
+    parser.add_argument(
+        "--dataset",
+        default=None,
+        help="评测集路径，默认 eval/dataset.jsonl",
+    )
+    args = parser.parse_args()
+    label = args.label or ("rerank" if args.rerank else None)
+    dataset_path = Path(args.dataset).resolve() if args.dataset else DATASET_PATH
+    result = run(label=label, rerank=args.rerank, dataset_path=dataset_path)
     print(json.dumps(result["summary"], ensure_ascii=False, indent=2))
+    print(f"report : {result['report']}")
+    print(f"results: {result['results']}")

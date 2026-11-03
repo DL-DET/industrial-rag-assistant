@@ -42,6 +42,19 @@ def test_is_relevant_requires_source_and_all_keywords():
     )
 
 
+def test_is_relevant_normalizes_pdf_line_breaks():
+    item = {
+        "gold_sources": [{"file": "手册.pdf", "page": 3}],
+        "gold_keywords": ["介质温度", "0~80"],
+    }
+    document = Document(
+        page_content="介质温\n度 0~80℃",
+        metadata={"source": "手册.pdf"},
+    )
+
+    assert is_relevant(document, item)
+
+
 def test_first_relevant_rank_and_recall():
     item = _item()
     documents = [

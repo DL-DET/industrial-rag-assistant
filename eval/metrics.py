@@ -7,9 +7,18 @@ DOCX 和 PDF：正文等价，但一个没有页码、一个有页码。统一�
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from langchain_core.documents import Document
+
+
+_WHITESPACE_PATTERN = re.compile(r"\s+")
+
+
+def _normalize(text: str) -> str:
+    """去掉空白字符，避免 PDF 换行把“介质温度”拆成“介质温\n度”。"""
+    return _WHITESPACE_PATTERN.sub("", text)
 
 
 def is_relevant(document: Document, item: dict[str, Any]) -> bool:
@@ -21,7 +30,8 @@ def is_relevant(document: Document, item: dict[str, Any]) -> bool:
     keywords = item.get("gold_keywords", [])
     if not keywords:
         return True
-    return all(keyword in document.page_content for keyword in keywords)
+    content = _normalize(document.page_content)
+    return all(_normalize(keyword) in content for keyword in keywords)
 
 
 def first_relevant_rank(documents: list[Document], item: dict[str, Any]) -> int | None:

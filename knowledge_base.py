@@ -119,6 +119,9 @@ class KnowledgeBaseService:
             knowledge_chunks: list[str] = []
             metadatas: list[dict[str, object]] = []
             for page, section_text in split_text_by_page(data):
+                # 暂不采用“始终切块”：实测会把参数表切碎，recall@3 从
+                # 0.967 降到 0.867（见 eval/report_split300.md）。
+                # 当前保留 1000 字阈值，后续用噪声过滤 + 更细的分块策略解决长块问题。
                 if len(section_text) > config.max_split_char_number:
                     section_chunks = self.splitter.split_text(section_text)
                 else:

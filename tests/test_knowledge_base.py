@@ -83,3 +83,39 @@ def test_upload_reports_duplicate(monkeypatch):
     assert result.status == "skipped"
     assert result.chunks == 0
     assert chroma.texts == []
+
+
+def test_upload_keeps_page_under_threshold_whole(monkeypatch):
+    chroma = FakeChroma()
+    service = _make_service(chroma)
+    monkeypatch.setattr(kb, "check_md5", lambda _: False)
+    monkeypatch.setattr(kb, "save_md5", lambda _: None)
+    monkeypatch.setattr(config, "max_split_char_number", 1000)
+
+    result = service.upload_by_str(
+        "[第 2 页]\n" + "甲" * 800,
+        "中等页面.pdf",
+    )
+
+    assert result.status == "success"
+    assert result.chunks == 1
+    assert chroma.texts == ["甲" * 800]
+    assert chroma.metadatas[0]["page"] == 2
+
+
+def test_upload_splits_page_over_threshold(monkeypatch):
+    chroma = FakeChroma()
+    service = _make_service(chroma)
+    monkeypatch.setattr(kb, "check_md5", lambda _: False)
+    monkeypatch.setattr(kb, "save_md5", lambda _: None)
+    monkeypatch.setattr(config, "max_split_char_number", 1000)
+
+    result = service.upload_by_str(
+        "[第 2 页]\n" + "甲" * 1200,
+        "超长页面.pdf",
+    )
+
+    assert result.status == "success"
+    assert result.chunks > 1
+    assert all(len(chunk) <= 300 for chunk in chroma.texts)
+    assert all(metadata["page"] == 2 for metadata in chroma.metadatas)

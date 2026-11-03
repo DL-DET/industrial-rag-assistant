@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterable, Iterator, Sequence
 
@@ -14,8 +15,11 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 import config_data as config
 from file_history_store import get_history
+from rerank import RerankService
 from vector_stores import VectorStoreService
 
+
+logger = logging.getLogger(__name__)
 
 PAGE_MARKER_PATTERN = re.compile(r"\[第\s*(\d+)\s*页\]")
 
@@ -61,6 +65,7 @@ class RagService:
             embedding=DashScopeEmbeddings(model=config.embedding_model_name)
         )
         self.retriever = self.vector_service.get_retriever()
+        self.reranker = RerankService() if config.rerank_enabled else None
         self.prompt_template = ChatPromptTemplate.from_messages(
             [
                 (
@@ -84,7 +89,38 @@ class RagService:
         self.answer_chain = self.prompt_template | self.chat_model | StrOutputParser()
 
     def retrieve(self, question: str) -> list[Document]:
-        return self.retriever.invoke(question)
+        """先向量召回候选片段，再按问题相关性重排；重排失败时回退纯向量结果。
+
+        重排是“精排”：向量检索负责尽量不漏（召回），重排负责把最相关
+        的片段排到前面（排序）。多召回一些候选、最终只保留 top_n，
+        用少量延迟换取更高的 recall@1。
+        """
+        if self.reranker is None:
+            return self.retriever.invoke(question)
+
+        candidates = self.vector_service.search_with_scores(
+            question,
+            k=config.rerank_candidate_k,
+        )
+        documents = [document for document, _ in candidates]
+        if not documents:
+            return []
+
+        try:
+            reranked = self.reranker.rerank(
+                question,
+                documents,
+                top_n=config.rerank_top_n,
+            )
+        except Exception:
+            # 外部重排服务可能超时或限流；不能让整个问答因此不可用，
+            # 回退到向量检索的前 top_k 条，保证服务可用性。
+            logger.exception("重排失败，回退到纯向量检索")
+            return documents[: config.retrieval_top_k]
+
+        if not reranked:
+            return documents[: config.retrieval_top_k]
+        return [document for document, _ in reranked]
 
     def stream_answer(
         self,

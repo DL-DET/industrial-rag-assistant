@@ -6,7 +6,26 @@
 python -m eval.run_eval
 ```
 
-只调用 Embedding 接口，不调用问答模型，成本低、速度快。
+做 A/B 实验时加标签，避免覆盖基线报告：
+
+```bash
+python -m eval.run_eval --label split300
+```
+
+测试重排：
+
+```bash
+python -m eval.run_eval --rerank
+```
+
+使用独立评测集：
+
+```bash
+python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_baseline
+python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_rerank --rerank
+```
+
+只调用 Embedding（以及启用 `--rerank` 时的重排接口），不调用问答模型，成本低、速度快。
 
 ## 评测集
 
@@ -14,6 +33,9 @@ python -m eval.run_eval
 
 - 30 条有答案，覆盖泵、风机、电机、PLC、安全规范和维修案例
 - 11 条无答案，用于后续拒答率评测；其中 u11 是“机械密封安装扭矩”hard negative
+
+`dataset_dedup.jsonl` 是同一批题目的去重版本：`gold_sources` 只保留 PDF，
+用于验证“去掉重复 DOCX 后指标是否仍然成立”。
 
 字段：
 
@@ -34,9 +56,12 @@ python -m eval.run_eval
 1. 来源文件属于 `gold_sources`
 2. 正文包含 `gold_keywords` 中的**全部**关键词
 
-同一资料同时存在 DOCX 和 PDF，正文等价但页码不同，因此用关键词匹配，避免等价来源被误判。
+匹配前会去掉正文和关键词中的空白字符，避免 PDF 在“介质温度”中间插入换行
+导致假阴性。原始语料同时存在 DOCX 和 PDF，正文等价但页码不同，因此用
+关键词匹配，避免等价来源被误判。
 
 ## 输出
 
 - `report.md`：汇总指标、Top-1 分数分布、逐题结果
 - `results.jsonl`：逐题完整检索记录，可继续做 trace 分析
+- 带 `--label` 时输出 `report_{label}.md` 和 `results_{label}.jsonl`，基线文件不会被覆盖

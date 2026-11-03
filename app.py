@@ -21,7 +21,12 @@ render_sidebar_brand(
     [
         ("模型密钥", "已配置" if readiness["api_key"] else "缺少密钥"),
         ("向量库", "已建库" if readiness["vector_store"] else "待建库"),
-        ("检索片段", f"TOP-{config.retrieval_top_k}"),
+        (
+            "检索策略",
+            f"重排 TOP-{config.rerank_top_n}"
+            if config.rerank_enabled
+            else f"向量 TOP-{config.retrieval_top_k}",
+        ),
         ("回答模型", config.chat_model_name),
     ]
 )

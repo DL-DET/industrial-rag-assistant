@@ -65,6 +65,15 @@ max_split_char_number = _read_positive_int("MAX_SPLIT_CHAR_NUMBER", 1000)
 # 检索与模型配置
 retrieval_top_k = _read_positive_int("RETRIEVAL_TOP_K", 3)
 max_history_messages = _read_positive_int("MAX_HISTORY_MESSAGES", 20)
+rerank_model = os.getenv("RERANK_MODEL", "gte-rerank-v2")
+rerank_top_n = _read_positive_int("RERANK_TOP_N", 3)
+rerank_candidate_k = _read_positive_int("RERANK_CANDIDATE_K", 10)
+rerank_enabled = os.getenv("RERANK_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 embedding_model_name = os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4")
 chat_model_name = os.getenv("CHAT_MODEL_NAME", "qwen-max")
 
