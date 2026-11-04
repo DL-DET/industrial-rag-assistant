@@ -16,13 +16,16 @@
 - 支持 TXT、PDF、DOCX 文档入库
 - 上传时校验扩展名与基本文件头，降低伪装文件风险
 - 按内容 MD5 自动去重，避免重复写入相同资料
+- 入库资料带 `doc_id` / `version`，支持按来源替换和删除
+- 上传成功状态在页面重跑后保留
+- 超长对话历史自动生成抽取式摘要
 - 使用 DashScope `text-embedding-v4` 生成向量
 - 使用 Chroma 持久化本地向量库
 - 使用通义千问 `qwen-max` 进行流式问答
 - 每个浏览器会话使用独立 ID，避免用户之间串用聊天记录
 - PDF 页码写入向量元数据，回答页面展示引证资料、页码与片段摘录
 - 章节感知的父子块：child 约 300 字用于检索，parent 约 800 字用于生成
-- 先向量召回 top-10，再用 `qwen3-rerank` 重排到 top-3，重排失败自动回退
+- 先向量召回 top-10，再用 `qwen3.7-text-rerank` 重排到 top-3，重排失败自动回退
 - 每次查询写入 trace：耗时、候选数、fallback 状态与来源，便于排查和统计
 - 100 条评测集支持 recall@1/3/5、MRR 与延迟统计，报告可复现
 - 资料不足时明确拒答，不编造设备参数或检修步骤
@@ -65,7 +68,7 @@ python -m eval.run_eval
 ### 重排实验（原始重复语料）
 
 历史实验在基线库上先召回 top-10，再用 `gte-rerank-v2` 重排（当前默认模型已升级为
-`qwen3-rerank`）：
+`qwen3.7-text-rerank`）：
 
 | 指标 | 纯向量 | 向量 + 重排 |
 | --- | --- | --- |
@@ -127,8 +130,9 @@ CHROMA_COLLECTION_NAME=rag_dedup \
 python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_rerank --rerank
 ```
 
-当前本地 `.env` 已指向 `chroma_db_clean` / `rag_clean`；
-`chroma_db_structured`、`chroma_db_dedup` 和原始 `chroma_db` 保留，用于复现旧指标和对比实验。
+当前本地 `.env` 已指向 `chroma_db_clean_table` / `rag_clean_table`；
+`chroma_db_clean`、`chroma_db_structured`、`chroma_db_dedup` 和原始 `chroma_db`
+保留，用于复现旧指标和对比实验。
 
 ### 新 DOCX 覆盖评测
 
@@ -215,7 +219,21 @@ python scripts/build_dataset_v2.py
 - 有答案 Top-1 平均分 0.846，无答案 0.584，分数区分度比旧模型更好。
 - 查询拆解 + qwen3 重排 top5 与直接重排完全一致，拆解没有叠加收益。
 
-当前默认模型已切换为 `qwen3-rerank`；`gte-rerank-v2` 的结果保留为历史对照。
+随后继续测试 `qwen3.7-text-rerank`：
+
+| 指标 | qwen3-rerank | qwen3.7-text-rerank |
+| --- | ---: | ---: |
+| recall@1 | 0.787 | **0.987** |
+| recall@3 | 0.947 | **1.000** |
+| recall@5 | 0.987 | **1.000** |
+| MRR | 0.868 | **0.993** |
+| P50 延迟 | 345 ms | 308 ms |
+| P95 延迟 | 451 ms | 467 ms |
+
+q07/q09/c02 全部到第 1；有答案 Top-1 平均分 0.982，无答案 0.465，分数区分度进一步拉开。
+
+当前默认模型已切换为 `qwen3.7-text-rerank`；`qwen3-rerank` 和 `gte-rerank-v2`
+的结果保留为历史对照。
 
 ### 结构化父子块（已接入）
 
@@ -250,7 +268,7 @@ python scripts/build_dataset_v2.py
 | MRR | 0.945 | 0.909 | **0.957** |
 
 清理后 child 数量从 55 降到 34，减少了目录页、封面和前言片段的干扰。
-当前应用已切换到 `chroma_db_clean`。
+当前应用已切换到 `chroma_db_clean_table`。
 
 复现：
 
@@ -266,6 +284,46 @@ CHROMA_PERSIST_DIRECTORY=chroma_db_structured \
 CHROMA_COLLECTION_NAME=rag_structured \
 python -m eval.run_eval --dataset eval/dataset_v2.jsonl --label v2_structured_rerank --rerank
 ```
+
+### 答案级评测与拒答（P004/P015）
+
+检索指标只能说明“找到了”，答案级评测检查“答对了没有”：
+
+- 关键词覆盖率
+- 全部关键词是否命中
+- 引用来源是否命中
+- 有答案题是否误拒答
+- 无答案题是否正确拒答
+- 按 Top-1 分数扫描拒答阈值
+
+25 条抽样（15 有答案 + 10 无答案，qwen3.7 重排）：
+
+| 指标 | 数值 |
+| --- | ---: |
+| 关键词覆盖率 | 1.000 |
+| 全部关键词命中率 | 1.000 |
+| 来源命中率 | 1.000 |
+| 回答引用来源率 | 0.867 |
+| 有答案误拒答率 | 0.000 |
+| 无答案正确拒答率 | 0.700 |
+
+阈值扫描中，阈值 0.7 时有答案误拒答 0%、无答案拒答 100%；阈值 0.6 时无答案拒答 70%。这说明 qwen3.7 的分数分布更适合做阈值拒答，但仍需要答案级校验兜底。
+
+> 完整 100 条答案级评测因重排额度限制暂未跑完；上面的 25 条样本结果有效。
+
+复现：
+
+```bash
+python -m eval.run_answer_eval --answerable-limit 15 --unanswerable-limit 10
+```
+
+### dev/test 划分
+
+```bash
+python scripts/split_dataset.py
+```
+
+输出 56 条 dev + 44 条 test，使用稳定哈希，重复运行结果一致。调参只看 dev，最终结论看 test。
 
 ### 查询拆解实验（未接入）
 
@@ -296,7 +354,7 @@ flowchart LR
     D --> E[(Chroma 向量库)]
     F[用户问题] --> G[向量召回 Top-10]
     E --> G
-    G --> R[qwen3-rerank 重排]
+    G --> R[qwen3.7-text-rerank 重排]
     R --> H[上下文 + 会话历史]
     H --> I[通义千问]
     I --> J[流式答案 + 来源]
@@ -391,7 +449,7 @@ streamlit run app.py
 | `RETRIEVAL_TOP_K` | `3` | 纯向量检索返回的片段数 |
 | `MAX_HISTORY_MESSAGES` | `20` | 进入 Prompt 的最近消息条数 |
 | `RERANK_ENABLED` | `true` | 是否启用重排；失败时自动回退 |
-| `RERANK_MODEL` | `qwen3-rerank` | 重排模型 |
+| `RERANK_MODEL` | `qwen3.7-text-rerank` | 重排模型 |
 | `RERANK_TOP_N` | `3` | 重排后保留的片段数 |
 | `RERANK_CANDIDATE_K` | `10` | 进入重排的候选片段数 |
 | `RERANK_TIMEOUT_SECONDS` | `3` | 本地等待重排的上限 |

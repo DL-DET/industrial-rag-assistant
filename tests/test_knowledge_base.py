@@ -15,10 +15,41 @@ class FakeChroma:
     def __init__(self):
         self.texts = []
         self.metadatas = []
+        self.ids = []
+        self.deleted = []
 
     def add_texts(self, texts, metadatas=None):
+        start = len(self.texts)
+        new_ids = [f"id-{start + index}" for index in range(len(texts))]
         self.texts.extend(texts)
         self.metadatas.extend(metadatas or [])
+        self.ids.extend(new_ids)
+        return new_ids
+
+    def get(self, where=None, include=None):
+        where = where or {}
+        indices = [
+            index
+            for index, metadata in enumerate(self.metadatas)
+            if all(metadata.get(key) == value for key, value in where.items())
+        ]
+        return {
+            "ids": [self.ids[index] for index in indices],
+            "metadatas": [self.metadatas[index] for index in indices],
+        }
+
+    def delete(self, ids=None, where=None):
+        ids = set(ids or [])
+        self.deleted.extend(ids)
+        kept_texts, kept_metadatas, kept_ids = [], [], []
+        for text, metadata, doc_id in zip(self.texts, self.metadatas, self.ids):
+            if doc_id not in ids:
+                kept_texts.append(text)
+                kept_metadatas.append(metadata)
+                kept_ids.append(doc_id)
+        self.texts = kept_texts
+        self.metadatas = kept_metadatas
+        self.ids = kept_ids
 
 
 def _make_service(chroma):
@@ -75,6 +106,8 @@ def test_upload_returns_success_with_page_metadata(monkeypatch):
     assert result.chunks == 2
     assert [metadata["page"] for metadata in chroma.metadatas] == [1, 2]
     assert all(metadata["source"] == "手册.pdf" for metadata in chroma.metadatas)
+    assert all(metadata["version"] == 1 for metadata in chroma.metadatas)
+    assert all(metadata["doc_id"] for metadata in chroma.metadatas)
 
 
 def test_upload_reports_duplicate(monkeypatch):
@@ -122,3 +155,52 @@ def test_upload_returns_parent_text_for_child(monkeypatch):
 
     assert chroma.metadatas[0]["parent_text"] == "甲内容"
     assert chroma.metadatas[1]["parent_text"] == "乙内容"
+
+
+def test_upload_replaces_old_source_with_new_version(monkeypatch):
+    chroma = FakeChroma()
+    service = _make_service(chroma)
+    monkeypatch.setattr(kb, "check_md5", lambda _: False)
+    monkeypatch.setattr(kb, "save_md5", lambda _: None)
+
+    service.upload_by_str("第一版内容", "手册.pdf")
+    old_ids = list(chroma.ids)
+    service.upload_by_str("第二版内容", "手册.pdf")
+
+    assert chroma.deleted == old_ids
+    assert all(metadata["version"] == 2 for metadata in chroma.metadatas)
+    assert all("第二版" in text for text in chroma.texts)
+
+
+def test_upload_rolls_back_vectors_when_md5_save_fails(monkeypatch):
+    chroma = FakeChroma()
+    service = _make_service(chroma)
+    monkeypatch.setattr(kb, "check_md5", lambda _: False)
+
+    def fail_save(_):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(kb, "save_md5", fail_save)
+
+    try:
+        service.upload_by_str("内容", "手册.pdf")
+    except OSError:
+        pass
+    else:
+        raise AssertionError("save_md5 失败时应抛出异常")
+
+    assert chroma.texts == []
+    assert len(chroma.deleted) == 1
+
+
+def test_delete_by_source_removes_all_chunks(monkeypatch):
+    chroma = FakeChroma()
+    service = _make_service(chroma)
+    monkeypatch.setattr(kb, "check_md5", lambda _: False)
+    monkeypatch.setattr(kb, "save_md5", lambda _: None)
+    service.upload_by_str("[第 1 页]\n甲内容", "手册.pdf")
+
+    removed = service.delete_by_source("手册.pdf")
+
+    assert removed >= 1
+    assert chroma.texts == []

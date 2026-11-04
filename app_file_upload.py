@@ -27,6 +27,60 @@ def _get_knowledge_base_service() -> KnowledgeBaseService:
     return KnowledgeBaseService()
 
 
+def _render_documents() -> None:
+    """展示已入库资料，并提供按来源删除。"""
+    try:
+        service = _get_knowledge_base_service()
+    except Exception as exc:
+        render_notice(f"知识库服务初始化失败：{exc}", "error")
+        return
+
+    try:
+        documents = service.list_documents()
+    except Exception as exc:
+        render_notice(f"读取知识库资料失败：{exc}", "error")
+        return
+
+    with st.expander(
+        f"已入库资料 / DOCUMENTS · {len(documents)} 项",
+        icon=":material/folder_open:",
+        expanded=False,
+    ):
+        if not documents:
+            st.caption("知识库中暂无资料。")
+            return
+        for index, document in enumerate(documents):
+            source = str(document.get("source", "未知来源"))
+            version = document.get("version", 1)
+            chunks = document.get("chunks", 0)
+            updated_at = str(document.get("updated_at", ""))[:19]
+            cols = st.columns([5, 2, 1])
+            cols[0].markdown(f"**{source}**  \n版本 v{version} · {chunks} 个片段")
+            cols[1].caption(updated_at or "—")
+            if cols[2].button("删除", key=f"delete-doc-{index}"):
+                try:
+                    removed = service.delete_by_source(source)
+                except Exception as exc:
+                    render_notice(f"删除失败：{exc}", "error")
+                    return
+                st.session_state.pop("last_ingest", None)
+                render_notice(f"已删除 {removed} 个片段：{source}", "info")
+                st.rerun()
+
+
+def _render_last_ingest() -> None:
+    last = st.session_state.get("last_ingest")
+    if not last:
+        return
+    render_file_card(
+        last["name"],
+        last["format"],
+        last["size_mb"],
+        last["status"],
+    )
+    render_notice(last["message"], last["kind"])
+
+
 def render() -> None:
     readiness = config.runtime_readiness()
     render_page_header(
@@ -43,6 +97,8 @@ def render() -> None:
         doc_no="IQ-KB-07",
     )
 
+    _render_documents()
+
     step_slot = st.empty()
 
     with st.container(key="upload_zone"):
@@ -56,9 +112,12 @@ def render() -> None:
             "选择要加入知识库的文件",
             type=["txt", "pdf", "docx"],
             accept_multiple_files=False,
+            help="支持 TXT / PDF / DOCX；点击文件选择器选择本地文件，或拖拽到上传区。",
         )
+        st.caption("文件选择器为 Streamlit 内置组件，按钮文案由框架提供。")
 
     if uploaded_file is None:
+        _render_last_ingest()
         render_step_bar(STEPS, 1, placeholder=step_slot)
         render_notice(
             "上传后会依次执行文本抽取、内容去重和向量写入。",
@@ -116,6 +175,14 @@ def render() -> None:
         else:
             file_status = "已存在"
             notice_kind = "info"
+        st.session_state.last_ingest = {
+            "name": uploaded_file.name,
+            "format": file_format,
+            "size_mb": file_size_mb,
+            "status": file_status,
+            "message": result.message,
+            "kind": notice_kind,
+        }
         render_file_card(
             uploaded_file.name,
             file_format,

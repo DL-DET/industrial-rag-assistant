@@ -99,6 +99,41 @@ def _is_noise_body(body: str) -> bool:
     return any(marker in stripped for marker in _NOISE_MARKERS)
 
 
+def _looks_like_table(text: str) -> bool:
+    return sum(1 for line in text.splitlines() if "|" in line) >= 2
+
+
+def _split_table_children(text: str, max_chars: int) -> list[str]:
+    """按行切表格，并在每个 child 中重复表头。"""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    table_index = next(
+        (index for index, line in enumerate(lines) if "|" in line),
+        None,
+    )
+    if table_index is None:
+        return [text]
+
+    prefix = lines[:table_index]
+    header = lines[table_index]
+    rows = lines[table_index + 1 :]
+    children: list[str] = []
+    current = [*prefix, header]
+    current_length = sum(len(line) + 1 for line in current)
+
+    for row in rows:
+        if len(current) > 1 and current_length + len(row) + 1 > max_chars:
+            children.append("\n".join(current))
+            current = [header, row]
+            current_length = len(header) + len(row) + 2
+        else:
+            current.append(row)
+            current_length += len(row) + 1
+
+    if current:
+        children.append("\n".join(current))
+    return children
+
+
 def split_sections(text: str) -> list[Section]:
     """按章节标题切分；没有标题时整段作为一个 section。"""
     sections: list[Section] = []
@@ -147,6 +182,8 @@ def build_parent_child_documents(
     source: str,
     doc_id: str,
     create_time: str,
+    version: int = 1,
+    updated_at: str | None = None,
     child_splitter: RecursiveCharacterTextSplitter | None = None,
     parent_splitter: RecursiveCharacterTextSplitter | None = None,
 ) -> list[Document]:
@@ -167,7 +204,11 @@ def build_parent_child_documents(
             if not section_text:
                 continue
 
-            parent_parts = parent_splitter.split_text(section_text)
+            parent_parts = (
+                [section_text]
+                if _looks_like_table(section_text)
+                else parent_splitter.split_text(section_text)
+            )
             for parent_index, parent_part in enumerate(parent_parts):
                 parent_text = parent_part.strip()
                 if not parent_text:
@@ -179,7 +220,11 @@ def build_parent_child_documents(
                     f"{doc_id}-{page if page is not None else 'none'}-"
                     f"{section_index}-{parent_index}"
                 )
-                children = child_splitter.split_text(parent_text)
+                children = (
+                    _split_table_children(parent_text, config.chunk_size)
+                    if _looks_like_table(parent_text)
+                    else child_splitter.split_text(parent_text)
+                )
                 for child_text in children:
                     child_text = child_text.strip()
                     if not child_text:
@@ -189,6 +234,9 @@ def build_parent_child_documents(
 
                     metadata: dict[str, object] = {
                         "source": source,
+                        "doc_id": doc_id,
+                        "version": version,
+                        "updated_at": updated_at or create_time,
                         "create_time": create_time,
                         "section": section.heading,
                         "parent_id": parent_id,

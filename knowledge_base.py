@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,6 +16,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import config_data as config
 from chunking import build_parent_child_documents, split_text_by_page
 
+
+logger = logging.getLogger(__name__)
 
 # Streamlit 可能并发触发上传请求，加锁可以避免同一内容被重复写入。
 _INGEST_LOCK = threading.Lock()
@@ -81,6 +84,63 @@ class KnowledgeBaseService:
             length_function=len,
         )
 
+    def _source_state(self, filename: str) -> tuple[list[str], int]:
+        """返回某个来源的现有向量 ids 和最大版本号。"""
+        data = self.chroma.get(
+            where={"source": filename},
+            include=["metadatas"],
+        )
+        ids = data.get("ids") or []
+        versions = [
+            int(metadata.get("version", 0))
+            for metadata in (data.get("metadatas") or [])
+            if metadata
+        ]
+        return ids, max(versions, default=0)
+
+    def list_documents(self) -> list[dict[str, object]]:
+        """按 doc_id 汇总知识库中的资料，供上传页展示和删除。"""
+        data = self.chroma.get(include=["metadatas"])
+        grouped: dict[tuple[str, str], dict[str, object]] = {}
+        for metadata in data.get("metadatas") or []:
+            if not metadata:
+                continue
+            source = str(metadata.get("source", "未知来源"))
+            doc_id = str(metadata.get("doc_id", ""))
+            key = (source, doc_id)
+            entry = grouped.setdefault(
+                key,
+                {
+                    "source": source,
+                    "doc_id": doc_id,
+                    "version": int(metadata.get("version", 1)),
+                    "updated_at": metadata.get("updated_at", ""),
+                    "chunks": 0,
+                },
+            )
+            entry["chunks"] = int(entry["chunks"]) + 1
+            entry["version"] = max(
+                int(entry["version"]),
+                int(metadata.get("version", 1)),
+            )
+        return sorted(
+            grouped.values(),
+            key=lambda item: (str(item["source"]), -int(item["version"])),
+        )
+
+    def delete_by_source(self, filename: str) -> int:
+        ids, _ = self._source_state(filename)
+        if ids:
+            self.chroma.delete(ids=ids)
+        return len(ids)
+
+    def delete_by_doc_id(self, doc_id: str) -> int:
+        data = self.chroma.get(where={"doc_id": doc_id})
+        ids = data.get("ids") or []
+        if ids:
+            self.chroma.delete(ids=ids)
+        return len(ids)
+
     def upload_by_str(self, data: str, filename: str) -> IngestResult:
         data = data.strip()
         if not data:
@@ -96,27 +156,50 @@ class KnowledgeBaseService:
                 )
 
             create_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            old_ids, old_version = self._source_state(filename)
             documents = build_parent_child_documents(
                 text=data,
                 source=filename,
                 doc_id=md5_hex,
                 create_time=create_time,
+                version=old_version + 1,
+                updated_at=create_time,
                 child_splitter=self.splitter,
                 parent_splitter=self.parent_splitter,
             )
             if not documents:
                 raise ValueError("文本分块结果为空，未写入知识库")
 
-            self.chroma.add_texts(
+            new_ids = self.chroma.add_texts(
                 [document.page_content for document in documents],
                 metadatas=[document.metadata for document in documents],
             )
-            save_md5(md5_hex)
+            try:
+                save_md5(md5_hex)
+            except Exception:
+                # 向量已写入但状态保存失败：回滚本次写入，避免留下无法去重的数据。
+                if new_ids:
+                    self.chroma.delete(ids=new_ids)
+                raise
+
+            if old_ids:
+                try:
+                    self.chroma.delete(ids=old_ids)
+                except Exception:
+                    logger.warning(
+                        "旧版本向量删除失败：source=%s ids=%s",
+                        filename,
+                        old_ids,
+                        exc_info=True,
+                    )
 
         return IngestResult(
             status="success",
             chunks=len(documents),
-            message=f"[成功] 已将 {len(documents)} 个文本片段写入知识库",
+            message=(
+                f"[成功] 已将 {len(documents)} 个文本片段写入知识库"
+                f"（版本 {old_version + 1}）"
+            ),
         )
 
 

@@ -74,7 +74,10 @@ def test_stream_answer_limits_history_window(tmp_path, monkeypatch):
 
     class FakeChain:
         def stream(self, inputs):
-            assert [message.content for message in inputs["history"]] == [
+            history_messages = inputs["history"]
+            assert history_messages[0].type == "system"
+            assert history_messages[0].content.startswith("历史对话摘要：")
+            assert [message.content for message in history_messages[1:]] == [
                 "第一次回答",
                 "第二轮",
             ]

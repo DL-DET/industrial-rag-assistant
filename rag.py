@@ -10,7 +10,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.documents import Document
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -41,8 +41,26 @@ def resolve_page_number(document: Document) -> int | None:
 
 
 def recent_history(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
-    """只保留最近若干条历史消息，避免多轮对话无限撑大 Prompt。"""
-    return list(messages[-config.max_history_messages :])
+    """保留最近窗口，并用抽取式摘要压缩更早的消息。
+
+    这里不额外调用大模型，避免摘要本身增加延迟和成本。
+    """
+    max_messages = config.max_history_messages
+    if len(messages) <= max_messages:
+        return list(messages)
+
+    older = messages[:-max_messages]
+    snippets: list[str] = []
+    for message in older[-6:]:
+        text = " ".join(str(message.content).split())
+        if text:
+            snippets.append(f"{message.type}: {text[:80]}")
+
+    recent = list(messages[-max_messages:])
+    if not snippets:
+        return recent
+    summary = SystemMessage(content="历史对话摘要：" + " | ".join(snippets))
+    return [summary, *recent]
 
 
 def format_documents(documents: Iterable[Document]) -> str:
@@ -140,6 +158,7 @@ class RagService:
             k=config.rerank_candidate_k,
         )
         documents = [document for document, _ in candidates]
+        vector_top_score = float(candidates[0][1]) if candidates else None
         trace.retrieval_ms = (time.perf_counter() - started) * 1000
         trace.candidate_count = len(documents)
         if not documents:
@@ -150,6 +169,7 @@ class RagService:
         if not self.reranker.available():
             trace.rerank_status = "circuit_open"
             trace.fallback = True
+            trace.top_score = vector_top_score
             documents = expand_parent_documents(
                 documents[: config.retrieval_top_k]
             )
@@ -168,10 +188,12 @@ class RagService:
             if reranked:
                 trace.rerank_status = "success"
                 trace.fallback = False
+                trace.top_score = float(reranked[0][1])
                 documents = [document for document, _ in reranked]
             else:
                 trace.rerank_status = "empty"
                 trace.fallback = True
+                trace.top_score = vector_top_score
                 documents = documents[: config.retrieval_top_k]
         except Exception:
             # 外部重排服务可能超时或限流；不能让整个问答因此不可用，
@@ -179,6 +201,7 @@ class RagService:
             trace.rerank_ms = (time.perf_counter() - rerank_started) * 1000
             trace.rerank_status = "fallback"
             trace.fallback = True
+            trace.top_score = vector_top_score
             logger.exception("重排失败，回退到纯向量检索")
             documents = documents[: config.retrieval_top_k]
 

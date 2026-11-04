@@ -18,7 +18,7 @@ python -m eval.run_eval --label split300
 python -m eval.run_eval --rerank
 ```
 
-默认重排模型是 `qwen3-rerank`；`gte-rerank-v2` 的报告保留为历史对照。
+默认重排模型是 `qwen3.7-text-rerank`；`qwen3-rerank` 和 `gte-rerank-v2` 的报告保留为历史对照。
 
 测试 BM25 + 向量混合检索：
 
@@ -36,6 +36,20 @@ python -m eval.run_eval --decompose --rerank --rerank-top-n 5
 
 混合检索和规则拆解目前只用于评测，不接入应用；应用默认仍是“向量召回 + 重排”。
 重排实验需要 DashScope 重排额度，免费额度耗尽时会报 `AllocationQuota.FreeTierOnly`。
+
+答案级评测（会调用 qwen-max）：
+
+```bash
+python -m eval.run_answer_eval --answerable-limit 15 --unanswerable-limit 10
+```
+
+划分 dev/test：
+
+```bash
+python scripts/split_dataset.py
+```
+
+输出 `dataset_v2_dev.jsonl`（56 条）和 `dataset_v2_test.jsonl`（44 条）。
 
 使用 100 条 v2 评测集：
 

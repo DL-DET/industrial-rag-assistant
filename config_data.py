@@ -81,7 +81,7 @@ separators = ["\n\n", "\n", "\t", " ", ".", "!", "?", ",", "。", ""]
 # 检索与模型配置
 retrieval_top_k = _read_positive_int("RETRIEVAL_TOP_K", 3)
 max_history_messages = _read_positive_int("MAX_HISTORY_MESSAGES", 20)
-rerank_model = os.getenv("RERANK_MODEL", "qwen3-rerank")
+rerank_model = os.getenv("RERANK_MODEL", "qwen3.7-text-rerank")
 rerank_top_n = _read_positive_int("RERANK_TOP_N", 3)
 rerank_candidate_k = _read_positive_int("RERANK_CANDIDATE_K", 10)
 rerank_enabled = os.getenv("RERANK_ENABLED", "true").strip().lower() in {

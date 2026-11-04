@@ -29,6 +29,7 @@ class QueryTrace:
     generation_ms: float | None = None
     rerank_status: str = "disabled"
     fallback: bool = False
+    top_score: float | None = None
     top_sources: list[str] = field(default_factory=list)
     answer_chars: int = 0
     error: str | None = None

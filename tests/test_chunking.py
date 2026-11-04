@@ -71,6 +71,23 @@ def test_build_parent_child_documents_sets_parent_metadata():
     assert all("1 设备概述" in document.page_content for document in documents)
 
 
+def test_table_children_repeat_header():
+    rows = "\n".join(f"参数{i} | 值{i}" for i in range(80))
+    documents = build_parent_child_documents(
+        text="[第 1 页]\n1 参数\n参数 | 数值\n" + rows,
+        source="表格.pdf",
+        doc_id="doc-table",
+        create_time="2026-11-04 12:00:00",
+    )
+
+    table_children = [
+        document for document in documents if "|" in document.page_content
+    ]
+
+    assert len(table_children) > 1
+    assert all("参数 | 数值" in document.page_content for document in table_children)
+
+
 def test_expand_parent_documents_deduplicates_children():
     child_a = Document(
         page_content="子块 A",
