@@ -30,6 +30,18 @@ _EXCLUDED_TITLE_TOKENS = (
     "小时",
     "个月",
     "kg",
+    "字；",
+    "字，",
+)
+_TOC_DOTS = re.compile(r"\.{4,}")
+_DATE_TITLE = re.compile(r"\d{4}\s*年")
+_NOISE_MARKERS = (
+    "用途与入库建议",
+    "使用建议",
+    "单块建议",
+    "入库时可按",
+    "向量化可使用",
+    "ChromaDB 本地持久化存储",
 )
 
 
@@ -61,13 +73,30 @@ def split_text_by_page(text: str) -> list[tuple[int | None, str]]:
 
 
 def _is_heading(line: str) -> bool:
-    match = _HEADING_PATTERN.match(line.strip())
+    stripped = line.strip()
+    if _DATE_TITLE.search(stripped):
+        return False
+    match = _HEADING_PATTERN.match(stripped)
     if not match:
         return False
     title = match.group("title").strip()
     if not re.search(r"[A-Za-z一-鿿]", title):
         return False
     return not any(token in title for token in _EXCLUDED_TITLE_TOKENS)
+
+
+def _is_noise_body(body: str) -> bool:
+    """过滤目录、封面、前言和入库建议等非知识内容。"""
+    stripped = body.strip()
+    if not stripped:
+        return True
+    if stripped.startswith(("目 录", "目录")):
+        return True
+    if _TOC_DOTS.search(stripped):
+        return True
+    if stripped.startswith("工业设备 RAG 知识库文本资料汇编"):
+        return True
+    return any(marker in stripped for marker in _NOISE_MARKERS)
 
 
 def split_sections(text: str) -> list[Section]:
@@ -128,6 +157,8 @@ def build_parent_child_documents(
     for page, page_text in split_text_by_page(text):
         sections = split_sections(page_text)
         for section_index, section in enumerate(sections):
+            if _is_noise_body(section.body):
+                continue
             section_text = (
                 f"{section.heading}\n{section.body}".strip()
                 if section.heading

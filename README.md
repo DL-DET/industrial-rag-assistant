@@ -127,8 +127,8 @@ CHROMA_COLLECTION_NAME=rag_dedup \
 python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_rerank --rerank
 ```
 
-当前本地 `.env` 已指向 `chroma_db_structured` / `rag_structured`；
-`chroma_db_dedup` 和原始 `chroma_db` 保留，用于复现旧指标和对比实验。
+当前本地 `.env` 已指向 `chroma_db_clean` / `rag_clean`；
+`chroma_db_structured`、`chroma_db_dedup` 和原始 `chroma_db` 保留，用于复现旧指标和对比实验。
 
 ### 新 DOCX 覆盖评测
 
@@ -236,8 +236,21 @@ python scripts/build_dataset_v2.py
 - c02：第 3 → **第 1**
 - `recall@1` 提升 12pp，`recall@3` 提升 4pp，MRR 提升 0.077
 
-结论：长块和表格被章节切分后，检索粒度和生成上下文同时改善；当前应用已切换到
-`chroma_db_structured`。
+结论：长块和表格被章节切分后，检索粒度和生成上下文同时改善。
+
+### 目录/前言清洗（已接入）
+
+在父子块基础上，过滤封面、目录页、前言和“入库建议”等非知识内容：
+
+| 指标 | 结构化 + qwen3 | 清洗 + 纯向量 | 清洗 + qwen3 |
+| --- | ---: | ---: | ---: |
+| recall@1 | 0.907 | 0.840 | **0.920** |
+| recall@3 | 0.987 | 1.000 | 0.987 |
+| recall@5 | 1.000 | 1.000 | 1.000 |
+| MRR | 0.945 | 0.909 | **0.957** |
+
+清理后 child 数量从 55 降到 34，减少了目录页、封面和前言片段的干扰。
+当前应用已切换到 `chroma_db_clean`。
 
 复现：
 

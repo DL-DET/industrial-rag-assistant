@@ -36,6 +36,25 @@ def test_split_text_by_page_keeps_page_numbers():
     ]
 
 
+def test_build_documents_skips_toc_and_preface():
+    documents = build_parent_child_documents(
+        text=(
+            "[第 1 页]\n工业设备 RAG 知识库文本资料汇编\n封面内容\n"
+            "[第 2 页]\n目 录\n前言......\n1 设备概述......\n"
+            "[第 3 页]\n前言：用途与入库建议\n使用建议：单块不超过 500 字\n"
+            "[第 4 页]\n1 设备概述\n介质温度 0~80℃，允许固体颗粒直径≤10mm。"
+        ),
+        source="手册.pdf",
+        doc_id="doc-noise",
+        create_time="2026-11-04 12:00:00",
+    )
+
+    assert documents
+    assert all("介质温度" in document.page_content for document in documents)
+    assert all("目 录" not in document.page_content for document in documents)
+    assert all("使用建议" not in document.page_content for document in documents)
+
+
 def test_build_parent_child_documents_sets_parent_metadata():
     documents = build_parent_child_documents(
         text="[第 3 页]\n1 设备概述\n" + "甲" * 900,
