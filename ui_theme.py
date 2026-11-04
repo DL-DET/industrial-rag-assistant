@@ -1275,6 +1275,25 @@ a:focus-visible,
     }
 }
 
+/* 上传组件内置英文文案的中文覆盖 */
+[data-testid="stFileUploaderDropzone"] button p {
+    font-size: 0 !important;
+}
+
+[data-testid="stFileUploaderDropzone"] button p::after {
+    content: "选择文件";
+    font-size: 0.92rem;
+}
+
+[data-testid="stFileUploaderDropzoneInstructions"] > div > span {
+    font-size: 0 !important;
+}
+
+[data-testid="stFileUploaderDropzoneInstructions"] > div > span::after {
+    content: "单文件 10MB · 支持 TXT / PDF / DOCX";
+    font-size: 0.82rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,

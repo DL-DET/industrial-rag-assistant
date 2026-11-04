@@ -112,9 +112,8 @@ def render() -> None:
             "选择要加入知识库的文件",
             type=["txt", "pdf", "docx"],
             accept_multiple_files=False,
-            help="支持 TXT / PDF / DOCX；点击文件选择器选择本地文件，或拖拽到上传区。",
+            help="支持 TXT / PDF / DOCX；点击“选择文件”选择本地文件，或拖拽到上传区。",
         )
-        st.caption("文件选择器为 Streamlit 内置组件，按钮文案由框架提供。")
 
     if uploaded_file is None:
         _render_last_ingest()
