@@ -18,6 +18,34 @@ python -m eval.run_eval --label split300
 python -m eval.run_eval --rerank
 ```
 
+默认重排模型是 `qwen3-rerank`；`gte-rerank-v2` 的报告保留为历史对照。
+
+测试 BM25 + 向量混合检索：
+
+```bash
+python -m eval.run_eval --hybrid
+python -m eval.run_eval --hybrid --rerank
+```
+
+测试多部分问题拆解：
+
+```bash
+python -m eval.run_eval --decompose
+python -m eval.run_eval --decompose --rerank --rerank-top-n 5
+```
+
+混合检索和规则拆解目前只用于评测，不接入应用；应用默认仍是“向量召回 + 重排”。
+重排实验需要 DashScope 重排额度，免费额度耗尽时会报 `AllocationQuota.FreeTierOnly`。
+
+使用 100 条 v2 评测集：
+
+```bash
+python -m eval.run_eval --dataset eval/dataset_v2.jsonl --label v2_vector
+python -m eval.run_eval --dataset eval/dataset_v2.jsonl --label v2_rerank --rerank
+python -m eval.run_eval --dataset eval/dataset_v2.jsonl --label v2_hybrid --hybrid
+python -m eval.run_eval --dataset eval/dataset_v2.jsonl --label v2_hybrid_rerank --hybrid --rerank
+```
+
 使用独立评测集：
 
 ```bash
@@ -39,6 +67,10 @@ python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_rerank 
 
 `dataset_conveyor.jsonl` 是新增带式输送机 DOCX 的覆盖评测：8 条有答案 +
 2 条无答案，用于验证新资料是否可检索、可回答，以及重排对无答案分数的区分度。
+
+`dataset_v2.jsonl` 是扩展后的 100 条评测集：75 条有答案 + 25 条无答案，
+覆盖泵、风机、电机、PLC、输送机、安全规范和维修案例。由
+`scripts/build_dataset_v2.py` 生成，构建时会校验关键词是否真的出现在对应来源中。
 
 字段：
 

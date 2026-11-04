@@ -25,6 +25,8 @@ from eval.metrics import (
     recall_at_k,
     reciprocal_rank,
 )
+from hybrid import HybridRetriever, reciprocal_rank_fusion
+from query_decompose import decompose_question
 from rerank import RerankService
 from vector_stores import VectorStoreService
 
@@ -68,14 +70,22 @@ def _render_report(
     label: str | None = None,
     rerank: bool = False,
     dataset_path: Path = DATASET_PATH,
+    hybrid: bool = False,
+    decompose: bool = False,
 ) -> str:
+    retrieval_strategy = "向量 + BM25" if hybrid else "纯向量"
+    if decompose:
+        retrieval_strategy = f"查询拆解 + {retrieval_strategy}"
+    if rerank:
+        retrieval_strategy += " + 重排"
     lines = [
         "# RAG 检索评测报告",
         "",
         f"- 实验标签：{label or 'baseline'}",
         f"- 评测集文件：{dataset_path.name}",
         f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"- 检索策略：{'向量 + 重排' if rerank else '纯向量'}",
+        f"- 检索策略：{retrieval_strategy}",
+        f"- 是否拆解：{'是' if decompose else '否'}",
         f"- 重排模型：{config.rerank_model if rerank else '—'}",
         f"- 评测集：{summary['total']} 条（有答案 {summary['answerable']} / 无答案 {summary['unanswerable']}）",
         f"- 评测检索深度：top-{EVAL_TOP_K}",
@@ -93,7 +103,7 @@ def _render_report(
         f"| P50 检索延迟 | {_fmt(summary['latency_p50_ms'], 1)} ms |",
         f"| P95 检索延迟 | {_fmt(summary['latency_p95_ms'], 1)} ms |",
         "",
-        f"## Top-1 {'重排' if rerank else '相似度'}分数分布（用于阈值）",
+        f"## Top-1 {'重排' if rerank else ('融合' if hybrid else '相似度')}分数分布（用于阈值）",
         "",
         "| 组 | 平均 | 最小 | 最大 |",
         "| --- | --- | --- | --- |",
@@ -126,11 +136,15 @@ def run(
     label: str | None = None,
     rerank: bool = False,
     dataset_path: Path = DATASET_PATH,
+    hybrid: bool = False,
+    decompose: bool = False,
+    rerank_top_n: int | None = None,
 ) -> dict[str, Any]:
     items = load_dataset(dataset_path)
     service = VectorStoreService(
         DashScopeEmbeddings(model=config.embedding_model_name)
     )
+    hybrid_retriever = HybridRetriever(service) if hybrid else None
     reranker = RerankService() if rerank else None
     records: list[dict[str, Any]] = []
     report_path = BASE_DIR / (f"report_{label}.md" if label else REPORT_PATH.name)
@@ -138,12 +152,26 @@ def run(
 
     for item in items:
         started = time.perf_counter()
-        pairs = service.search_with_scores(item["question"], k=EVAL_TOP_K)
+        queries = decompose_question(item["question"]) if decompose else [item["question"]]
+        query_results = []
+        for query in queries:
+            if hybrid_retriever is not None:
+                query_results.append(hybrid_retriever.search(query, k=EVAL_TOP_K))
+            else:
+                query_results.append(
+                    service.search_with_scores(query, k=EVAL_TOP_K)
+                )
+
+        pairs = (
+            reciprocal_rank_fusion(query_results)
+            if len(query_results) > 1
+            else query_results[0]
+        )
         if reranker is not None:
             pairs = reranker.rerank(
                 item["question"],
                 [document for document, _ in pairs],
-                top_n=EVAL_TOP_K,
+                top_n=rerank_top_n or EVAL_TOP_K,
             )
         latency_ms = (time.perf_counter() - started) * 1000
 
@@ -165,7 +193,17 @@ def run(
             "top_score": round(scores[0], 4) if scores else None,
             "top_source": top_document.metadata.get("source") if top_document else None,
             "top_page": top_document.metadata.get("page") if top_document else None,
-            "score_kind": "rerank" if rerank else "vector",
+            "queries": queries,
+            "score_kind": "_".join(
+                part
+                for part, enabled in [
+                    ("decompose", decompose),
+                    ("hybrid", hybrid),
+                    ("rerank", rerank),
+                ]
+                if enabled
+            )
+            or "vector",
             "latency_ms": round(latency_ms, 2),
             "retrieved": [
                 {
@@ -190,7 +228,15 @@ def run(
         encoding="utf-8",
     )
     report_path.write_text(
-        _render_report(summary, records, label, rerank, dataset_path),
+        _render_report(
+            summary,
+            records,
+            label=label,
+            rerank=rerank,
+            dataset_path=dataset_path,
+            hybrid=hybrid,
+            decompose=decompose,
+        ),
         encoding="utf-8",
     )
 
@@ -218,10 +264,40 @@ if __name__ == "__main__":
         default=None,
         help="评测集路径，默认 eval/dataset.jsonl",
     )
+    parser.add_argument(
+        "--hybrid",
+        action="store_true",
+        help="使用 BM25 + 向量 RRF 混合检索",
+    )
+    parser.add_argument(
+        "--decompose",
+        action="store_true",
+        help="对多部分问题做规则拆解，再融合子查询结果",
+    )
+    parser.add_argument(
+        "--rerank-top-n",
+        type=int,
+        default=None,
+        help="重排后保留条数，默认等于评测深度 top-10",
+    )
     args = parser.parse_args()
-    label = args.label or ("rerank" if args.rerank else None)
+    label_parts = []
+    if args.decompose:
+        label_parts.append("decompose")
+    if args.hybrid:
+        label_parts.append("hybrid")
+    if args.rerank:
+        label_parts.append("rerank")
+    label = args.label or ("_".join(label_parts) or None)
     dataset_path = Path(args.dataset).resolve() if args.dataset else DATASET_PATH
-    result = run(label=label, rerank=args.rerank, dataset_path=dataset_path)
+    result = run(
+        label=label,
+        rerank=args.rerank,
+        dataset_path=dataset_path,
+        hybrid=args.hybrid,
+        decompose=args.decompose,
+        rerank_top_n=args.rerank_top_n,
+    )
     print(json.dumps(result["summary"], ensure_ascii=False, indent=2))
     print(f"report : {result['report']}")
     print(f"results: {result['results']}")

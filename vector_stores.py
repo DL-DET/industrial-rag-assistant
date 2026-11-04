@@ -35,6 +35,17 @@ class VectorStoreService:
             k=k or config.retrieval_top_k,
         )
 
+    def all_documents(self) -> list[Document]:
+        """读取全量片段，供 BM25 等词法检索建索引。"""
+        data = self.vector_store.get(include=["documents", "metadatas"])
+        texts = data.get("documents") or []
+        metadatas = data.get("metadatas") or []
+        return [
+            Document(page_content=text, metadata=metadata or {})
+            for text, metadata in zip(texts, metadatas)
+            if text
+        ]
+
 
 if __name__ == "__main__":
     from langchain_community.embeddings import DashScopeEmbeddings
