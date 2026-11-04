@@ -28,6 +28,10 @@ def _make_service(chroma):
         chunk_size=300,
         chunk_overlap=50,
     )
+    service.parent_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,
+        chunk_overlap=100,
+    )
     return service
 
 
@@ -85,37 +89,36 @@ def test_upload_reports_duplicate(monkeypatch):
     assert chroma.texts == []
 
 
-def test_upload_keeps_page_under_threshold_whole(monkeypatch):
+def test_upload_creates_parent_child_metadata(monkeypatch):
     chroma = FakeChroma()
     service = _make_service(chroma)
     monkeypatch.setattr(kb, "check_md5", lambda _: False)
     monkeypatch.setattr(kb, "save_md5", lambda _: None)
-    monkeypatch.setattr(config, "max_split_char_number", 1000)
 
     result = service.upload_by_str(
-        "[第 2 页]\n" + "甲" * 800,
-        "中等页面.pdf",
-    )
-
-    assert result.status == "success"
-    assert result.chunks == 1
-    assert chroma.texts == ["甲" * 800]
-    assert chroma.metadatas[0]["page"] == 2
-
-
-def test_upload_splits_page_over_threshold(monkeypatch):
-    chroma = FakeChroma()
-    service = _make_service(chroma)
-    monkeypatch.setattr(kb, "check_md5", lambda _: False)
-    monkeypatch.setattr(kb, "save_md5", lambda _: None)
-    monkeypatch.setattr(config, "max_split_char_number", 1000)
-
-    result = service.upload_by_str(
-        "[第 2 页]\n" + "甲" * 1200,
-        "超长页面.pdf",
+        "[第 2 页]\n1 设备概述\n" + "甲" * 1200,
+        "长文档.pdf",
     )
 
     assert result.status == "success"
     assert result.chunks > 1
-    assert all(len(chunk) <= 300 for chunk in chroma.texts)
     assert all(metadata["page"] == 2 for metadata in chroma.metadatas)
+    assert all("parent_id" in metadata for metadata in chroma.metadatas)
+    assert all("parent_text" in metadata for metadata in chroma.metadatas)
+    assert all(metadata["section"] == "1 设备概述" for metadata in chroma.metadatas)
+    assert len({metadata["parent_id"] for metadata in chroma.metadatas}) >= 1
+
+
+def test_upload_returns_parent_text_for_child(monkeypatch):
+    chroma = FakeChroma()
+    service = _make_service(chroma)
+    monkeypatch.setattr(kb, "check_md5", lambda _: False)
+    monkeypatch.setattr(kb, "save_md5", lambda _: None)
+
+    service.upload_by_str(
+        "[第 1 页]\n甲内容\n[第 2 页]\n乙内容",
+        "手册.pdf",
+    )
+
+    assert chroma.metadatas[0]["parent_text"] == "甲内容"
+    assert chroma.metadatas[1]["parent_text"] == "乙内容"

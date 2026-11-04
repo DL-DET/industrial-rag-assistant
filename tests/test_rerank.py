@@ -1,10 +1,11 @@
+import time
 from types import SimpleNamespace
 
 import pytest
 from langchain_core.documents import Document
 
 import rerank
-from rerank import RerankService
+from rerank import RerankService, RerankTimeout
 
 
 def _response(results, status_code=200):
@@ -56,3 +57,45 @@ def test_rerank_raises_on_api_error(monkeypatch):
             "问题",
             [Document(page_content="文档")],
         )
+
+
+def test_rerank_timeout_opens_circuit(monkeypatch):
+    monkeypatch.setattr(rerank.config, "rerank_timeout_seconds", 0.01)
+    monkeypatch.setattr(rerank.config, "rerank_failure_threshold", 2)
+    monkeypatch.setattr(rerank.config, "rerank_cooldown_seconds", 60.0)
+
+    def slow_call(**kwargs):
+        time.sleep(0.2)
+        return _response([])
+
+    monkeypatch.setattr(rerank.TextReRank, "call", slow_call)
+    service = RerankService(model="test-model")
+    documents = [Document(page_content="文档")]
+
+    for _ in range(2):
+        with pytest.raises(RerankTimeout):
+            service.rerank("问题", documents)
+
+    assert service.available() is False
+    with pytest.raises(RuntimeError, match="熔断"):
+        service.rerank("问题", documents)
+
+
+def test_rerank_circuit_half_opens_after_cooldown(monkeypatch):
+    monkeypatch.setattr(rerank.config, "rerank_timeout_seconds", 0.01)
+    monkeypatch.setattr(rerank.config, "rerank_failure_threshold", 1)
+    monkeypatch.setattr(rerank.config, "rerank_cooldown_seconds", 0.01)
+
+    def slow_call(**kwargs):
+        time.sleep(0.2)
+        return _response([])
+
+    monkeypatch.setattr(rerank.TextReRank, "call", slow_call)
+    service = RerankService(model="test-model")
+
+    with pytest.raises(RerankTimeout):
+        service.rerank("问题", [Document(page_content="文档")])
+
+    assert service.available() is False
+    time.sleep(0.02)
+    assert service.available() is True

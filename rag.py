@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections.abc import Iterable, Iterator, Sequence
 
 from langchain_community.chat_models.tongyi import ChatTongyi
@@ -14,7 +15,9 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 import config_data as config
+from chunking import expand_parent_documents
 from file_history_store import get_history
+from observability import QueryTrace, new_trace_id
 from rerank import RerankService
 from vector_stores import VectorStoreService
 
@@ -58,6 +61,16 @@ def format_documents(documents: Iterable[Document]) -> str:
     return "\n\n".join(formatted_documents)
 
 
+def source_labels(documents: Iterable[Document]) -> list[str]:
+    """只记录来源和页码，不把正文写进 trace。"""
+    labels: list[str] = []
+    for document in documents:
+        source = str(document.metadata.get("source", "未知来源"))
+        page = resolve_page_number(document)
+        labels.append(f"{source} p.{page}" if page is not None else source)
+    return labels
+
+
 class RagService:
     def __init__(self):
         config.ensure_dashscope_api_key()
@@ -89,38 +102,90 @@ class RagService:
         self.answer_chain = self.prompt_template | self.chat_model | StrOutputParser()
 
     def retrieve(self, question: str) -> list[Document]:
-        """先向量召回候选片段，再按问题相关性重排；重排失败时回退纯向量结果。
+        """兼容旧调用：只返回文档，不暴露 trace。"""
+        documents, _ = self.retrieve_with_trace(question)
+        return documents
+
+    def retrieve_with_trace(
+        self,
+        question: str,
+        trace_id: str | None = None,
+        session_id: str = "",
+    ) -> tuple[list[Document], QueryTrace]:
+        """先向量召回候选片段，再按问题相关性重排，并记录本次检索 trace。
 
         重排是“精排”：向量检索负责尽量不漏（召回），重排负责把最相关
         的片段排到前面（排序）。多召回一些候选、最终只保留 top_n，
         用少量延迟换取更高的 recall@1。
         """
+        trace = QueryTrace(
+            trace_id=trace_id or new_trace_id(),
+            session_id=session_id,
+            query_chars=len(question),
+        )
+
+        started = time.perf_counter()
         if self.reranker is None:
-            return self.retriever.invoke(question)
+            documents = self.retriever.invoke(question)
+            documents = expand_parent_documents(documents)
+            trace.retrieval_ms = (time.perf_counter() - started) * 1000
+            trace.candidate_count = len(documents)
+            trace.returned_count = len(documents)
+            trace.rerank_status = "disabled"
+            trace.top_sources = source_labels(documents)
+            return documents, trace
 
         candidates = self.vector_service.search_with_scores(
             question,
             k=config.rerank_candidate_k,
         )
         documents = [document for document, _ in candidates]
+        trace.retrieval_ms = (time.perf_counter() - started) * 1000
+        trace.candidate_count = len(documents)
         if not documents:
-            return []
+            trace.rerank_status = "empty"
+            trace.returned_count = 0
+            return [], trace
 
+        if not self.reranker.available():
+            trace.rerank_status = "circuit_open"
+            trace.fallback = True
+            documents = expand_parent_documents(
+                documents[: config.retrieval_top_k]
+            )
+            trace.returned_count = len(documents)
+            trace.top_sources = source_labels(documents)
+            return documents, trace
+
+        rerank_started = time.perf_counter()
         try:
             reranked = self.reranker.rerank(
                 question,
                 documents,
                 top_n=config.rerank_top_n,
             )
+            trace.rerank_ms = (time.perf_counter() - rerank_started) * 1000
+            if reranked:
+                trace.rerank_status = "success"
+                trace.fallback = False
+                documents = [document for document, _ in reranked]
+            else:
+                trace.rerank_status = "empty"
+                trace.fallback = True
+                documents = documents[: config.retrieval_top_k]
         except Exception:
             # 外部重排服务可能超时或限流；不能让整个问答因此不可用，
             # 回退到向量检索的前 top_k 条，保证服务可用性。
+            trace.rerank_ms = (time.perf_counter() - rerank_started) * 1000
+            trace.rerank_status = "fallback"
+            trace.fallback = True
             logger.exception("重排失败，回退到纯向量检索")
-            return documents[: config.retrieval_top_k]
+            documents = documents[: config.retrieval_top_k]
 
-        if not reranked:
-            return documents[: config.retrieval_top_k]
-        return [document for document, _ in reranked]
+        documents = expand_parent_documents(documents)
+        trace.returned_count = len(documents)
+        trace.top_sources = source_labels(documents)
+        return documents, trace
 
     def stream_answer(
         self,

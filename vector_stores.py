@@ -6,6 +6,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
 import config_data as config
+from chunking import expand_parent_pairs
 
 
 class VectorStoreService:
@@ -34,6 +35,13 @@ class VectorStoreService:
             query,
             k=k or config.retrieval_top_k,
         )
+
+    def expand_parents(
+        self,
+        pairs: list[tuple[Document, float]],
+    ) -> list[tuple[Document, float]]:
+        """把命中的 child 片段展开为 parent，并保持原排序。"""
+        return expand_parent_pairs(pairs)
 
     def all_documents(self) -> list[Document]:
         """读取全量片段，供 BM25 等词法检索建索引。"""

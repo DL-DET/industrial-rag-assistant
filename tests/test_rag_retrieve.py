@@ -26,6 +26,9 @@ class FakeReranker:
         self.error = error
         self.calls: list[tuple[str, list[Document], int | None]] = []
 
+    def available(self):
+        return True
+
     def rerank(self, query, documents, top_n=None):
         self.calls.append((query, documents, top_n))
         if self.error is not None:
@@ -59,9 +62,18 @@ def test_retrieve_returns_reranked_order(monkeypatch):
     monkeypatch.setattr(config, "rerank_candidate_k", 10)
     monkeypatch.setattr(config, "rerank_top_n", 2)
 
-    result = service.retrieve("问题")
+    result, trace = service.retrieve_with_trace(
+        "问题",
+        trace_id="trace-1",
+        session_id="session-1",
+    )
 
     assert [document.page_content for document in result] == ["C", "A"]
+    assert trace.trace_id == "trace-1"
+    assert trace.candidate_count == 4
+    assert trace.returned_count == 2
+    assert trace.rerank_status == "success"
+    assert trace.fallback is False
     assert vector_service.calls == [("问题", 10)]
     assert reranker.calls[0][0] == "问题"
     assert reranker.calls[0][2] == 2
@@ -77,9 +89,14 @@ def test_retrieve_falls_back_to_vector_top_k_when_rerank_fails(
     monkeypatch.setattr(config, "retrieval_top_k", 3)
 
     with caplog.at_level(logging.ERROR):
-        result = service.retrieve("问题")
+        result, trace = service.retrieve_with_trace("问题")
 
     assert [document.page_content for document in result] == ["A", "B", "C"]
+    assert trace.rerank_status == "fallback"
+    assert trace.fallback is True
+    assert trace.candidate_count == 5
+    assert trace.returned_count == 3
+    assert trace.rerank_ms is not None
     assert "重排失败" in caplog.text
 
 
@@ -89,7 +106,12 @@ def test_retrieve_returns_empty_without_candidates(monkeypatch):
     service = _make_service(reranker, vector_service=vector_service)
     monkeypatch.setattr(config, "rerank_candidate_k", 10)
 
-    assert service.retrieve("问题") == []
+    result, trace = service.retrieve_with_trace("问题")
+
+    assert result == []
+    assert trace.candidate_count == 0
+    assert trace.returned_count == 0
+    assert trace.rerank_status == "empty"
     assert reranker.calls == []
 
 
@@ -98,7 +120,40 @@ def test_retrieve_skips_rerank_when_disabled():
     retriever = FakeRetriever(documents)
     service = _make_service(None, retriever=retriever)
 
-    result = service.retrieve("问题")
+    result, trace = service.retrieve_with_trace("问题")
 
     assert [document.page_content for document in result] == ["A", "B"]
+    assert trace.candidate_count == 2
+    assert trace.returned_count == 2
+    assert trace.rerank_status == "disabled"
+    assert trace.rerank_ms is None
     assert retriever.calls == ["问题"]
+
+
+class OpenCircuitReranker:
+    def __init__(self):
+        self.calls = 0
+
+    def available(self):
+        return False
+
+    def rerank(self, query, documents, top_n=None):
+        self.calls += 1
+        raise AssertionError("熔断时不应调用重排")
+
+
+def test_retrieve_skips_rerank_when_circuit_is_open(monkeypatch):
+    documents = [_doc(name) for name in "ABCDE"]
+    vector_service = FakeVectorService(documents)
+    reranker = OpenCircuitReranker()
+    service = _make_service(reranker, vector_service=vector_service)
+    monkeypatch.setattr(config, "retrieval_top_k", 3)
+
+    result, trace = service.retrieve_with_trace("问题")
+
+    assert [document.page_content for document in result] == ["A", "B", "C"]
+    assert trace.rerank_status == "circuit_open"
+    assert trace.fallback is True
+    assert trace.candidate_count == 5
+    assert trace.returned_count == 3
+    assert reranker.calls == 0

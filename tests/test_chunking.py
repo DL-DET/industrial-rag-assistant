@@ -1,0 +1,89 @@
+from langchain_core.documents import Document
+
+from chunking import (
+    build_parent_child_documents,
+    expand_parent_documents,
+    expand_parent_pairs,
+    split_sections,
+    split_text_by_page,
+)
+
+
+def test_split_sections_by_heading():
+    sections = split_sections("前言\n1 设备概述\n甲\n1.1 参数\n乙")
+
+    assert [(section.heading, section.body) for section in sections] == [
+        ("", "前言"),
+        ("1 设备概述", "甲"),
+        ("1.1 参数", "乙"),
+    ]
+
+
+def test_heading_filter_ignores_table_values():
+    sections = split_sections("1.6 m/s\n30 kW\n1 设备概述\n甲")
+
+    assert [(section.heading, section.body) for section in sections] == [
+        ("", "1.6 m/s\n30 kW"),
+        ("1 设备概述", "甲"),
+    ]
+
+
+def test_split_text_by_page_keeps_page_numbers():
+    assert split_text_by_page("前言\n[第 1 页]\n甲\n[第 2 页]\n乙") == [
+        (None, "前言"),
+        (1, "甲"),
+        (2, "乙"),
+    ]
+
+
+def test_build_parent_child_documents_sets_parent_metadata():
+    documents = build_parent_child_documents(
+        text="[第 3 页]\n1 设备概述\n" + "甲" * 900,
+        source="手册.pdf",
+        doc_id="doc-1",
+        create_time="2026-11-04 12:00:00",
+    )
+
+    assert documents
+    assert all(document.metadata["page"] == 3 for document in documents)
+    assert all(document.metadata["section"] == "1 设备概述" for document in documents)
+    assert all("parent_id" in document.metadata for document in documents)
+    assert all("parent_text" in document.metadata for document in documents)
+    assert all("1 设备概述" in document.page_content for document in documents)
+
+
+def test_expand_parent_documents_deduplicates_children():
+    child_a = Document(
+        page_content="子块 A",
+        metadata={"parent_id": "p1", "parent_text": "父块内容", "source": "手册.pdf"},
+    )
+    child_b = Document(
+        page_content="子块 B",
+        metadata={"parent_id": "p1", "parent_text": "父块内容", "source": "手册.pdf"},
+    )
+
+    expanded = expand_parent_documents([child_a, child_b])
+
+    assert len(expanded) == 1
+    assert expanded[0].page_content == "父块内容"
+    assert expanded[0].metadata["parent_id"] == "p1"
+    assert "parent_text" not in expanded[0].metadata
+
+
+def test_expand_parent_pairs_keeps_first_score():
+    child = Document(
+        page_content="子块",
+        metadata={"parent_id": "p1", "parent_text": "父块内容"},
+    )
+
+    expanded = expand_parent_pairs([(child, 0.9), (child, 0.5)])
+
+    assert len(expanded) == 1
+    assert expanded[0][0].page_content == "父块内容"
+    assert expanded[0][1] == 0.9
+
+
+def test_document_without_parent_metadata_is_kept():
+    document = Document(page_content="普通片段", metadata={"source": "a.pdf"})
+
+    assert expand_parent_documents([document]) == [document]

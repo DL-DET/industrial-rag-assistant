@@ -28,6 +28,18 @@ def _read_positive_int(name: str, default: int) -> int:
     return value
 
 
+def _read_positive_float(name: str, default: float) -> float:
+    """读取正浮点环境变量，用于超时和冷却时间。"""
+    raw_value = os.getenv(name, str(default))
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"环境变量 {name} 必须是数字，当前值为：{raw_value}") from exc
+    if value <= 0:
+        raise ValueError(f"环境变量 {name} 必须大于 0，当前值为：{value}")
+    return value
+
+
 def _read_path(name: str, default: Path) -> Path:
     """读取路径配置；相对路径统一转换为相对于项目根目录的绝对路径。"""
     path = Path(os.getenv(name, str(default))).expanduser()
@@ -50,6 +62,7 @@ chat_history_directory = _read_path(
     "CHAT_HISTORY_DIRECTORY",
     PROJECT_ROOT / "chat_history",
 )
+qa_log_path = _read_path("QA_LOG_PATH", PROJECT_ROOT / "logs" / "qa.jsonl")
 
 # Chroma 配置
 collection_name = os.getenv("CHROMA_COLLECTION_NAME", "rag")
@@ -59,8 +72,11 @@ chunk_size = _read_positive_int("CHUNK_SIZE", 300)
 chunk_overlap = _read_positive_int("CHUNK_OVERLAP", 50)
 if chunk_overlap >= chunk_size:
     raise ValueError("CHUNK_OVERLAP 必须小于 CHUNK_SIZE")
+parent_chunk_size = _read_positive_int("PARENT_CHUNK_SIZE", 800)
+parent_chunk_overlap = _read_positive_int("PARENT_CHUNK_OVERLAP", 100)
+if parent_chunk_overlap >= parent_chunk_size:
+    raise ValueError("PARENT_CHUNK_OVERLAP 必须小于 PARENT_CHUNK_SIZE")
 separators = ["\n\n", "\n", "\t", " ", ".", "!", "?", ",", "。", ""]
-max_split_char_number = _read_positive_int("MAX_SPLIT_CHAR_NUMBER", 1000)
 
 # 检索与模型配置
 retrieval_top_k = _read_positive_int("RETRIEVAL_TOP_K", 3)
@@ -74,9 +90,18 @@ rerank_enabled = os.getenv("RERANK_ENABLED", "true").strip().lower() in {
     "yes",
     "on",
 }
+rerank_timeout_seconds = _read_positive_float("RERANK_TIMEOUT_SECONDS", 3.0)
+rerank_failure_threshold = _read_positive_int("RERANK_FAILURE_THRESHOLD", 3)
+rerank_cooldown_seconds = _read_positive_float("RERANK_COOLDOWN_SECONDS", 60.0)
 # BM25 混合检索评测参数；应用默认仍使用“向量召回 + 重排”。
 hybrid_bm25_k = _read_positive_int("HYBRID_BM25_K", 10)
 hybrid_rrf_k = _read_positive_int("HYBRID_RRF_K", 60)
+observability_enabled = os.getenv("OBSERVABILITY_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 embedding_model_name = os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4")
 chat_model_name = os.getenv("CHAT_MODEL_NAME", "qwen-max")
 

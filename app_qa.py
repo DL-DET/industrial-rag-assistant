@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 
@@ -9,6 +10,7 @@ import streamlit as st
 from langchain_core.documents import Document
 
 import config_data as config
+from observability import QueryTrace, new_trace_id, write_trace
 from rag import PAGE_MARKER_PATTERN, RagService, resolve_page_number
 from ui_theme import (
     render_message_label,
@@ -170,6 +172,8 @@ def render() -> None:
             render_message_label(message["role"], label_no)
             st.markdown(message["content"])
             _render_sources(message.get("sources", []))
+            if message.get("trace_id"):
+                st.caption(f"TRACE #{message['trace_id']}")
 
     if len(st.session_state.messages) == 1 and not pending_prompt:
         render_quick_prompts(QUICK_PROMPTS, _queue_prompt)
@@ -188,6 +192,14 @@ def render() -> None:
         st.markdown(prompt)
 
     answer_no = _role_count(st.session_state.messages, "assistant") + 1
+    trace_id = new_trace_id()
+    trace = QueryTrace(
+        trace_id=trace_id,
+        session_id=st.session_state.chat_session_id,
+        query_chars=len(prompt),
+    )
+    generation_started: float | None = None
+    answer_chunks: list[str] = []
     try:
         with st.chat_message("assistant", avatar=CHAT_AVATARS["assistant"]):
             render_message_label("assistant", answer_no)
@@ -197,8 +209,13 @@ def render() -> None:
                 expanded=False,
             ) as status:
                 try:
-                    documents = rag_service.retrieve(prompt)
+                    documents, trace = rag_service.retrieve_with_trace(
+                        prompt,
+                        trace_id=trace_id,
+                        session_id=st.session_state.chat_session_id,
+                    )
                 except Exception as exc:
+                    trace.error = str(exc)
                     status.update(label="检索失败，请检查知识库或模型配置", state="error")
                     raise
                 sources = _document_sources(documents)
@@ -206,13 +223,13 @@ def render() -> None:
                 status.update(
                     label=(
                         f"重排完成，保留 {len(documents)} 个片段"
-                        if config.rerank_enabled
+                        if trace.rerank_status == "success"
                         else f"检索完成，命中 {len(documents)} 个片段"
                     ),
                     state="complete",
                 )
-
-            answer_chunks: list[str] = []
+                if trace.fallback:
+                    st.caption("重排不可用，已降级为向量检索")
 
             def capture_stream():
                 for chunk in rag_service.stream_answer(
@@ -223,19 +240,30 @@ def render() -> None:
                     answer_chunks.append(chunk)
                     yield chunk
 
+            generation_started = time.perf_counter()
             st.write_stream(capture_stream())
+            trace.generation_ms = (time.perf_counter() - generation_started) * 1000
             answer = "".join(answer_chunks).strip()
+            trace.answer_chars = len(answer)
             _render_sources(sources)
+            st.caption(f"TRACE #{trace.trace_id}")
 
         st.session_state.messages.append(
             {
                 "role": "assistant",
                 "content": answer or "本次回答为空，请重试。",
                 "sources": sources,
+                "trace_id": trace.trace_id,
             }
         )
     except Exception as exc:
+        trace.error = trace.error or str(exc)
         render_notice(f"回答生成失败：{exc}", "error")
+    finally:
+        if generation_started is not None and trace.generation_ms is None:
+            trace.generation_ms = (time.perf_counter() - generation_started) * 1000
+        trace.answer_chars = len("".join(answer_chunks))
+        write_trace(trace)
 
 
 if __name__ == "__main__":

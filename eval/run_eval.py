@@ -173,6 +173,7 @@ def run(
                 [document for document, _ in pairs],
                 top_n=rerank_top_n or EVAL_TOP_K,
             )
+        pairs = service.expand_parents(pairs)
         latency_ms = (time.perf_counter() - started) * 1000
 
         documents = [document for document, _ in pairs]

@@ -21,8 +21,10 @@
 - 使用通义千问 `qwen-max` 进行流式问答
 - 每个浏览器会话使用独立 ID，避免用户之间串用聊天记录
 - PDF 页码写入向量元数据，回答页面展示引证资料、页码与片段摘录
+- 章节感知的父子块：child 约 300 字用于检索，parent 约 800 字用于生成
 - 先向量召回 top-10，再用 `qwen3-rerank` 重排到 top-3，重排失败自动回退
-- 41 条评测集支持 recall@1/3/5、MRR 与延迟统计，报告可复现
+- 每次查询写入 trace：耗时、候选数、fallback 状态与来源，便于排查和统计
+- 100 条评测集支持 recall@1/3/5、MRR 与延迟统计，报告可复现
 - 资料不足时明确拒答，不编造设备参数或检修步骤
 - 文件解析、会话隔离、去重逻辑、重排降级和上下文格式化包含自动化测试
 
@@ -125,8 +127,8 @@ CHROMA_COLLECTION_NAME=rag_dedup \
 python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_rerank --rerank
 ```
 
-当前本地 `.env` 已指向 `chroma_db_dedup` / `rag_dedup`；原始 `chroma_db` 保留，
-用于复现旧指标和对比实验。
+当前本地 `.env` 已指向 `chroma_db_structured` / `rag_structured`；
+`chroma_db_dedup` 和原始 `chroma_db` 保留，用于复现旧指标和对比实验。
 
 ### 新 DOCX 覆盖评测
 
@@ -215,6 +217,43 @@ python scripts/build_dataset_v2.py
 
 当前默认模型已切换为 `qwen3-rerank`；`gte-rerank-v2` 的结果保留为历史对照。
 
+### 结构化父子块（已接入）
+
+按章节标题切 section，再把 section 切成约 800 字的 parent 和约 300 字的 child。
+检索和重排使用 child，命中后展开为 parent 交给大模型。
+
+| 指标 | 去重库 + qwen3 | 结构化库，纯向量 | 结构化库 + qwen3 |
+| --- | ---: | ---: | ---: |
+| recall@1 | 0.787 | 0.787 | **0.907** |
+| recall@3 | 0.947 | 0.907 | **0.987** |
+| recall@5 | 0.987 | 1.000 | 1.000 |
+| MRR | 0.868 | 0.863 | **0.945** |
+
+关键变化：
+
+- q07：第 3 → **第 2**
+- q09：第 2 → **第 2**
+- c02：第 3 → **第 1**
+- `recall@1` 提升 12pp，`recall@3` 提升 4pp，MRR 提升 0.077
+
+结论：长块和表格被章节切分后，检索粒度和生成上下文同时改善；当前应用已切换到
+`chroma_db_structured`。
+
+复现：
+
+```bash
+python scripts/build_eval_corpus.py \
+  --persist-dir chroma_db_structured \
+  --collection rag_structured \
+  --md5-path md5_text_structured \
+  data/工业设备RAG知识库文本资料汇编.pdf \
+  data/工业设备RAG知识库补充资料_带式输送机.docx
+
+CHROMA_PERSIST_DIRECTORY=chroma_db_structured \
+CHROMA_COLLECTION_NAME=rag_structured \
+python -m eval.run_eval --dataset eval/dataset_v2.jsonl --label v2_structured_rerank --rerank
+```
+
 ### 查询拆解实验（未接入）
 
 规则式拆解把“原因 + 处理”“A 和 B 是多少”拆成子问题，分别检索后用 RRF 融合：
@@ -237,8 +276,9 @@ python scripts/build_dataset_v2.py
 
 ```mermaid
 flowchart LR
-    A[上传 TXT / PDF / DOCX] --> B[文本提取与分块]
-    B --> C[内容指纹去重]
+    A[上传 TXT / PDF / DOCX] --> B[文本提取与章节切分]
+    B --> P[父子块切分]
+    P --> C[内容指纹去重]
     C --> D[DashScope Embedding]
     D --> E[(Chroma 向量库)]
     F[用户问题] --> G[向量召回 Top-10]
@@ -258,11 +298,13 @@ flowchart LR
 ├── app_file_upload.py      # 知识库更新页面
 ├── ui_theme.py             # 蓝图工程档案主题和页面视觉组件
 ├── file_parsers.py         # TXT / PDF / DOCX 文本提取
-├── knowledge_base.py       # 文档分块、向量化和去重
+├── chunking.py             # 章节感知的父子块切分
+├── knowledge_base.py       # 文档入库、向量化和去重
 ├── rag.py                  # 检索、Prompt、模型与流式链路
 ├── rerank.py               # DashScope 文本重排
 ├── hybrid.py               # BM25 + 向量 RRF 混合检索（评测用）
 ├── query_decompose.py      # 多部分问题规则拆解（评测用）
+├── observability.py        # 查询 trace 与 JSONL 日志
 ├── vector_stores.py        # Chroma 向量库适配
 ├── file_history_store.py   # 本地会话历史
 ├── config_data.py          # 环境变量和路径配置
@@ -339,12 +381,18 @@ streamlit run app.py
 | `RERANK_MODEL` | `qwen3-rerank` | 重排模型 |
 | `RERANK_TOP_N` | `3` | 重排后保留的片段数 |
 | `RERANK_CANDIDATE_K` | `10` | 进入重排的候选片段数 |
+| `RERANK_TIMEOUT_SECONDS` | `3` | 本地等待重排的上限 |
+| `RERANK_FAILURE_THRESHOLD` | `3` | 连续失败多少次后熔断 |
+| `RERANK_COOLDOWN_SECONDS` | `60` | 熔断冷却时间 |
 | `HYBRID_BM25_K` | `10` | BM25 召回的候选数（评测用） |
 | `HYBRID_RRF_K` | `60` | RRF 融合常数（评测用） |
-| `CHUNK_SIZE` | `300` | 文本分块长度 |
-| `CHUNK_OVERLAP` | `50` | 分块重叠长度 |
-| `MAX_SPLIT_CHAR_NUMBER` | `1000` | 页面超过该长度才调用切块器 |
+| `CHUNK_SIZE` | `300` | child 分块长度（用于检索） |
+| `CHUNK_OVERLAP` | `50` | child 分块重叠长度 |
+| `PARENT_CHUNK_SIZE` | `800` | parent 分块长度（用于生成） |
+| `PARENT_CHUNK_OVERLAP` | `100` | parent 分块重叠长度 |
 | `MAX_UPLOAD_SIZE_MB` | `10` | 应用层单文件大小限制 |
+| `QA_LOG_PATH` | `logs/qa.jsonl` | 查询 trace 落盘路径 |
+| `OBSERVABILITY_ENABLED` | `true` | 是否写入查询 trace |
 
 修改 `MAX_UPLOAD_SIZE_MB` 时，请同步调整 `.streamlit/config.toml` 中的
 `maxUploadSize`，避免上传框提示与后端校验不一致。
@@ -363,7 +411,8 @@ python -m pytest -q
 ```
 
 测试不需要调用模型 API，覆盖文本编码、PDF/DOCX 解析、会话 ID 校验、历史读写、
-内容去重、RAG 上下文格式化、评测指标，以及问答页和上传页的 Streamlit 启动。
+内容去重、RAG 上下文格式化、查询 trace、评测指标，以及问答页和上传页的
+Streamlit 启动。
 
 检索基线评测需要调用 Embedding API：
 
@@ -374,12 +423,43 @@ python -m eval.run_eval
 仓库包含 GitHub Actions 工作流，在推送和拉取请求时使用 Python 3.11 与 3.13
 执行编译和测试。
 
+## 可观测性
+
+每次问答会向 `logs/qa.jsonl` 追加一条 trace：
+
+```json
+{
+  "trace_id": "fd84d47d39c5",
+  "candidate_count": 10,
+  "returned_count": 3,
+  "retrieval_ms": 777.8,
+  "rerank_ms": 176.8,
+  "generation_ms": 6050.8,
+  "rerank_status": "success",
+  "fallback": false,
+  "top_sources": ["工业设备RAG知识库文本资料汇编.pdf p.4"],
+  "answer_chars": 250
+}
+```
+
+`rerank_status` 可能是 `success`、`fallback`、`circuit_open`、`disabled` 或 `empty`。
+不记录完整问题和回答正文，只记录长度、来源和耗时，降低敏感资料落盘风险。
+
+统计：
+
+```bash
+python scripts/qa_stats.py --log logs/qa.jsonl
+```
+
+输出查询总数、重排状态、fallback 次数与比例、候选/返回数、检索/重排/生成 P50/P95。
+
 ## 设计说明
 
 - **相对路径配置**：所有本地路径基于项目根目录生成，也可以通过环境变量替换。
 - **会话隔离**：Streamlit 为每个浏览器会话生成随机 ID，历史文件不接受路径字符。
 - **原子写入**：聊天历史先写入临时文件再替换目标文件，降低文件损坏概率。
 - **资料不足回退**：Prompt 明确要求在缺少依据时拒绝编造，页面同时展示引证资料与页码。
+- **重排降级**：重排最多等待 3 秒；连续失败 3 次后熔断 60 秒，熔断期间直接使用向量 Top-K。
 - **上传保护**：应用检查扩展名、基本文件头和文件大小；扫描版 PDF 没有文本时会提示先做 OCR。
 
 ## 已知限制
@@ -387,7 +467,8 @@ python -m eval.run_eval
 - 当前是本地单进程演示版，没有登录、权限管理和数据库级会话隔离。
 - Chroma 和聊天历史保存在本地磁盘，不适合直接部署为多实例生产服务。
 - 扫描版 PDF 尚未集成 OCR。
-- 已接入向量召回 + 重排；BM25 混合检索已验证，但与重排不是简单叠加，暂未接入应用；去重语料上 q07/q09 仍稳定在第 4，召回侧还有缺口。
+- 已接入章节感知的父子块和“向量召回 + qwen3 重排”；BM25 混合检索已验证，但与重排不是简单叠加，暂未接入应用。
+- 父子块目前按标题和文本行切分，表格 schema 还没有完整结构化，复杂跨页表格仍需 P021 继续处理。
 - 评测集只有 41 条，且新加入的带式输送机 DOCX 还没有对应题目，结论需要继续扩充样本复验。
 - 新的带式输送机 DOCX 是 RAG 评测用示例资料，不是厂商正式手册，参数不能直接用于现场施工。
 - 修复前入库的历史向量没有 `page` 元数据；页面会尝试从正文的 `[第 N 页]`
