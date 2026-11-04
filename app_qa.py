@@ -11,7 +11,13 @@ from langchain_core.documents import Document
 
 import config_data as config
 from observability import QueryTrace, new_trace_id, write_trace
-from rag import PAGE_MARKER_PATTERN, RagService, resolve_page_number
+from rag import (
+    PAGE_MARKER_PATTERN,
+    REFUSAL_ANSWER,
+    RagService,
+    resolve_page_number,
+    should_refuse,
+)
 from ui_theme import (
     render_message_label,
     render_notice,
@@ -220,31 +226,50 @@ def render() -> None:
                     raise
                 sources = _document_sources(documents)
                 st.caption(f"命中 {len(documents)} 个知识片段")
-                status.update(
-                    label=(
-                        f"重排完成，保留 {len(documents)} 个片段"
-                        if trace.rerank_status == "success"
-                        else f"检索完成，命中 {len(documents)} 个片段"
-                    ),
-                    state="complete",
-                )
                 if trace.fallback:
                     st.caption("重排不可用，已降级为向量检索")
+                refused = should_refuse(trace)
+                if refused:
+                    status.update(label="依据不足，已跳过生成", state="complete")
+                else:
+                    status.update(
+                        label=(
+                            f"重排完成，保留 {len(documents)} 个片段"
+                            if trace.rerank_status == "success"
+                            else f"检索完成，命中 {len(documents)} 个片段"
+                        ),
+                        state="complete",
+                    )
 
-            def capture_stream():
-                for chunk in rag_service.stream_answer(
-                    prompt,
-                    st.session_state.chat_session_id,
-                    documents,
-                ):
-                    answer_chunks.append(chunk)
-                    yield chunk
+            if refused:
+                # 依据不足：不调用生成模型。既避免编造，也省掉约 6 秒生成耗时。
+                trace.refused = True
+                trace.refusal_reason = "score_below_threshold"
+                answer = REFUSAL_ANSWER
+                trace.answer_chars = len(answer)
+                rag_service.record_turn(
+                    prompt, answer, st.session_state.chat_session_id
+                )
+                st.markdown(answer)
+                st.caption(
+                    f"Top-1 分数 {trace.top_score:.2f} 低于阈值 "
+                    f"{config.refusal_score_threshold:.2f}，跳过生成"
+                )
+            else:
+                def capture_stream():
+                    for chunk in rag_service.stream_answer(
+                        prompt,
+                        st.session_state.chat_session_id,
+                        documents,
+                    ):
+                        answer_chunks.append(chunk)
+                        yield chunk
 
-            generation_started = time.perf_counter()
-            st.write_stream(capture_stream())
-            trace.generation_ms = (time.perf_counter() - generation_started) * 1000
-            answer = "".join(answer_chunks).strip()
-            trace.answer_chars = len(answer)
+                generation_started = time.perf_counter()
+                st.write_stream(capture_stream())
+                trace.generation_ms = (time.perf_counter() - generation_started) * 1000
+                answer = "".join(answer_chunks).strip()
+                trace.answer_chars = len(answer)
             _render_sources(sources)
             st.caption(f"TRACE #{trace.trace_id}")
 
@@ -262,7 +287,9 @@ def render() -> None:
     finally:
         if generation_started is not None and trace.generation_ms is None:
             trace.generation_ms = (time.perf_counter() - generation_started) * 1000
-        trace.answer_chars = len("".join(answer_chunks))
+        # 拒答路径没有流式片段，不能用它覆盖已记录的拒答文案长度。
+        if answer_chunks:
+            trace.answer_chars = len("".join(answer_chunks))
         write_trace(trace)
 
 

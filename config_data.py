@@ -102,6 +102,16 @@ observability_enabled = os.getenv("OBSERVABILITY_ENABLED", "true").strip().lower
     "yes",
     "on",
 }
+# 拒答路由：重排分过低时不调用生成模型，避免模型在没有依据时编造。
+# 阈值 0.75 来自 dev 集扫描（有答案最低 0.813、无答案最高 0.690 的中位），
+# 0.70~0.80 区间指标相同，取中点是为了给分数漂移留安全边际。
+refusal_enabled = os.getenv("REFUSAL_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+refusal_score_threshold = _read_positive_float("REFUSAL_SCORE_THRESHOLD", 0.75)
 embedding_model_name = os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4")
 chat_model_name = os.getenv("CHAT_MODEL_NAME", "qwen-max")
 

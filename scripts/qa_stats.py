@@ -38,6 +38,7 @@ def main() -> None:
     total = len(records)
     statuses = Counter(record.get("rerank_status", "unknown") for record in records)
     fallback = sum(1 for record in records if record.get("fallback"))
+    refused = sum(1 for record in records if record.get("refused"))
     candidates = [record["candidate_count"] for record in records]
     returned = [record["returned_count"] for record in records]
 
@@ -51,6 +52,7 @@ def main() -> None:
     print(f"查询总数：{total}")
     print("重排状态：" + "，".join(f"{key}={value}" for key, value in statuses.items()))
     print(f"fallback：{fallback} 次，{fallback / total:.1%}")
+    print(f"拒答：{refused} 次，{refused / total:.1%}")
     print(f"平均候选数：{sum(candidates) / total:.1f}")
     print(f"平均返回数：{sum(returned) / total:.1f}")
 

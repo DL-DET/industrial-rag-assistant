@@ -11,8 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import config_data as config
 from eval.answer_metrics import evaluate_answer, threshold_table
-from rag import RagService
+from rag import REFUSAL_ANSWER, RagService, should_refuse
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -71,6 +72,12 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "unanswerable_refusal_rate": mean(
             [1.0 if record["refusal"] else 0.0 for record in unanswerable]
         ),
+        "answerable_route_refusal_rate": mean(
+            [1.0 if record["refusal_route"] else 0.0 for record in answerable]
+        ),
+        "unanswerable_route_refusal_rate": mean(
+            [1.0 if record["refusal_route"] else 0.0 for record in unanswerable]
+        ),
         "thresholds": threshold_table(records, THRESHOLDS),
     }
 
@@ -81,6 +88,8 @@ def render_report(summary: dict[str, Any], records: list[dict[str, Any]]) -> str
         "",
         f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"- 样本：有答案 {summary['answerable']} / 无答案 {summary['unanswerable']}",
+        f"- 拒答路由：{'开启' if config.refusal_enabled else '关闭'}"
+        f"，阈值 {config.refusal_score_threshold:.2f}（仅对重排分生效）",
         "",
         "## 汇总",
         "",
@@ -92,6 +101,8 @@ def render_report(summary: dict[str, Any], records: list[dict[str, Any]]) -> str
         f"| 回答引用来源率 | {summary['cites_source_rate']:.3f} |",
         f"| 有答案误拒答率 | {summary['answerable_refusal_rate']:.3f} |",
         f"| 无答案正确拒答率 | {summary['unanswerable_refusal_rate']:.3f} |",
+        f"| 有答案路由拒答率 | {summary['answerable_route_refusal_rate']:.3f} |",
+        f"| 无答案路由拒答率 | {summary['unanswerable_route_refusal_rate']:.3f} |",
         "",
         "## 拒答阈值扫描（仅按 Top-1 分数模拟）",
         "",
@@ -132,7 +143,24 @@ def main() -> None:
     parser.add_argument("--unanswerable-limit", type=int, default=10)
     parser.add_argument("--report", default=str(DEFAULT_REPORT))
     parser.add_argument("--results", default=str(DEFAULT_RESULTS))
+    parser.add_argument(
+        "--refusal-threshold",
+        type=float,
+        default=None,
+        help="覆盖拒答阈值，用于和线上默认值做对比",
+    )
+    parser.add_argument(
+        "--no-refusal",
+        action="store_true",
+        help="关闭拒答路由，只让模型自行判断是否有依据",
+    )
     args = parser.parse_args()
+
+    # 评测和线上共用同一份判断逻辑，这里只临时覆盖配置，不改代码路径。
+    if args.no_refusal:
+        config.refusal_enabled = False
+    elif args.refusal_threshold is not None:
+        config.refusal_score_threshold = args.refusal_threshold
 
     items = load_items(Path(args.dataset))
     answerable = select_evenly(
@@ -153,11 +181,17 @@ def main() -> None:
             item["question"],
             session_id=session_id,
         )
-        answer = service.invoke_answer(
-            item["question"],
-            session_id=session_id,
-            documents=documents,
-        )
+        # 依据不足时直接拒答，不调用生成模型；这条路径和线上完全一致。
+        refused_route = should_refuse(trace)
+        if refused_route:
+            answer = REFUSAL_ANSWER
+            service.record_turn(item["question"], answer, session_id)
+        else:
+            answer = service.invoke_answer(
+                item["question"],
+                session_id=session_id,
+                documents=documents,
+            )
         metrics = evaluate_answer(item, answer, trace.top_sources)
         record = {
             "id": item["id"],
@@ -167,6 +201,7 @@ def main() -> None:
             "rerank_status": trace.rerank_status,
             "sources": trace.top_sources,
             "answer_preview": _preview(answer),
+            "refusal_route": refused_route,
             **metrics,
         }
         records.append(record)
@@ -174,6 +209,7 @@ def main() -> None:
             f"[{index}/{len(selected)}] {item['id']} "
             f"answerable={item['answerable']} "
             f"score={record['top_score']} "
+            f"route_refusal={refused_route} "
             f"coverage={record['coverage']} "
             f"refusal={record['refusal']}"
         )

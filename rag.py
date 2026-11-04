@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 
 PAGE_MARKER_PATTERN = re.compile(r"\[第\s*(\d+)\s*页\]")
 
+# 拒答文案必须包含“暂无足够依据”，答案级评测靠这个标记判断是否拒答。
+REFUSAL_ANSWER = (
+    "知识库中暂无足够依据回答该问题。"
+    "建议补充相关设备手册或巡检规范后再试。"
+)
+
 
 def resolve_page_number(document: Document) -> int | None:
     """优先读取 metadata 页码；旧数据没有 metadata 时回退解析正文页码标记。"""
@@ -77,6 +83,22 @@ def format_documents(documents: Iterable[Document]) -> str:
     if not formatted_documents:
         return "知识库中没有检索到相关资料。"
     return "\n\n".join(formatted_documents)
+
+
+def should_refuse(trace: QueryTrace) -> bool:
+    """判断本次检索依据是否不足，不足时跳过生成直接拒答。
+
+    只认重排分：降级路径（fallback / circuit_open / empty）的 top_score
+    是向量相似度，和重排分不是同一把尺子，共用阈值会误伤真实问题。
+    降级时宁可不拒答，交给提示词兜底。
+    """
+    if not config.refusal_enabled:
+        return False
+    if trace.rerank_status != "success":
+        return False
+    if trace.top_score is None:
+        return False
+    return trace.top_score < config.refusal_score_threshold
 
 
 def source_labels(documents: Iterable[Document]) -> list[str]:
@@ -209,6 +231,14 @@ class RagService:
         trace.returned_count = len(documents)
         trace.top_sources = source_labels(documents)
         return documents, trace
+
+    def record_turn(self, question: str, answer: str, session_id: str) -> None:
+        """把一轮问答写入历史；拒答路径也要记录，保证多轮对话连贯。"""
+        if not answer.strip():
+            return
+        get_history(session_id).add_messages(
+            [HumanMessage(content=question), AIMessage(content=answer)]
+        )
 
     def stream_answer(
         self,

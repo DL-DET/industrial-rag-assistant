@@ -309,6 +309,37 @@ python -m eval.run_eval --dataset eval/dataset_v2.jsonl --label v2_structured_re
 
 阈值扫描中，阈值 0.7 时有答案误拒答 0%、无答案拒答 96%；阈值 0.6 时无答案拒答 76%。这说明 qwen3.7 的分数分布已经比较适合阈值拒答，但仍需要答案级校验兜底。
 
+### 拒答路由（P015）
+
+上面的阈值扫描只是事后模拟。生成前真正的拦截在 `rag.py` 的 `should_refuse()`：
+
+- 阈值 0.75，dev 集扫描、test 集验证。dev 有答案最低 0.813、无答案最高 0.690；0.70 / 0.75 / 0.78 / 0.80 四档指标完全相同，取中点 0.75，两侧各留 0.06 安全边际
+- 只对 `rerank_status == "success"` 的重排分生效。降级时 `top_score` 是向量相似度，尺子不同，不套用阈值，交给提示词兜底
+- 应用和评测共用同一函数，避免两套实现漂移
+
+test 集 44 条（32 有答案 + 12 无答案）开关对比：
+
+| 指标 | 关闭路由 | 开启路由 |
+| --- | ---: | ---: |
+| 有答案误拒 | 0.000 | 0.000 |
+| 无答案拒答 | 0.500 (6/12) | 0.917 (11/12) |
+| 关键词覆盖 | 0.943 | 0.943 |
+| 回答引用来源 | 0.812 | 0.812 |
+
+拒答路径不调用生成模型，无答案问题的端到端耗时从约 7 秒降到约 1 秒。仍有 1 道题拒不掉（u09，分数 0.846），属于真实重叠，单阈值无法解决。
+
+复现：
+
+```bash
+python -m eval.run_answer_eval --dataset eval/dataset_v2_test.jsonl \
+  --answerable-limit 100 --unanswerable-limit 100 \
+  --report eval/answer_report_test_route.md --results eval/answer_results_test_route.jsonl
+
+python -m eval.run_answer_eval --dataset eval/dataset_v2_test.jsonl \
+  --answerable-limit 100 --unanswerable-limit 100 --no-refusal \
+  --report eval/answer_report_test_noroute.md --results eval/answer_results_test_noroute.jsonl
+```
+
 失败样例：6 道有答案题没有命中全部关键词，11 道回答没有显式引用来源，5 道无答案题仍被回答；这些都是下一步要处理的重点。
 
 复现：

@@ -32,6 +32,8 @@ class QueryTrace:
     top_score: float | None = None
     top_sources: list[str] = field(default_factory=list)
     answer_chars: int = 0
+    refused: bool = False
+    refusal_reason: str | None = None
     error: str | None = None
     created_at: str = field(
         default_factory=lambda: datetime.now().isoformat(timespec="seconds")
