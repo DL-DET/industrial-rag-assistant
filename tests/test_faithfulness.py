@@ -50,6 +50,32 @@ def test_parse_rejects_missing_field():
     assert parse_judgement('{"reason": "缺字段"}') is None
 
 
+def test_parse_keeps_string_false():
+    """字符串 "false" 不能被 bool() 转成 True，否则方向说反的答案会被判忠实。"""
+    result = parse_judgement(
+        '{"supported": "false", "unsupported_claims": [], "reason": "方向相反"}'
+    )
+    assert result.supported is False
+
+
+def test_parse_rejects_null_supported():
+    """null 是无效输出，应该判为解析失败，不能当成“不忠实”进入分母。"""
+    assert parse_judgement('{"supported": null}') is None
+
+
+def test_judge_returns_failure_when_invoke_raises():
+    """网络异常或限流不能中断整轮评测。"""
+
+    class FailingModel:
+        def invoke(self, messages):
+            raise RuntimeError("429 Too Many Requests")
+
+    result = judge_faithfulness("问题", "答案内容。", [_doc()], model=FailingModel())
+
+    assert result.supported is None
+    assert "判定调用失败" in result.reason
+
+
 def test_judge_skips_refusal():
     model = FakeModel('{"supported": false}')
     result = judge_faithfulness(

@@ -19,7 +19,10 @@ import config_data as config
 
 
 logger = logging.getLogger(__name__)
-_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rerank")
+# 线程池只是用来施加本地等待上限，不能真正中断已经开始执行的请求：
+# Python 线程无法强杀，DashScope 的底层 HTTP 超时也不对外开放。
+# 因此池子开到 4，宁可多留备用线程，也不要两次超时就把整个重排堵死。
+_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="rerank")
 
 
 class RerankTimeout(RuntimeError):
@@ -86,6 +89,11 @@ class RerankService:
             )
             response = future.result(timeout=self.timeout_seconds)
         except FutureTimeoutError as exc:
+            # 排队中的任务可以取消；已经开始执行的取消不了，只能等它自己结束。
+            # 仍然记一次失败，让熔断器把后续请求挡在外面，避免线程继续被吃掉。
+            cancelled = future.cancel()
+            if not cancelled:
+                logger.warning("重排请求超时且无法取消，线程仍被占用")
             self._record_failure()
             raise RerankTimeout(
                 f"重排超时（>{self.timeout_seconds:.1f}s）"

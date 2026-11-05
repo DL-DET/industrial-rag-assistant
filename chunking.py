@@ -96,7 +96,14 @@ def _is_noise_body(body: str) -> bool:
         return True
     if stripped.startswith("工业设备 RAG 知识库文本资料汇编"):
         return True
-    return any(marker in stripped for marker in _NOISE_MARKERS)
+
+    # 入库建议类噪声只看 section 首行，且要求首行是短句。
+    # 原来用全文子串匹配，正文里只要出现“使用建议”四个字，整节合法内容都会被丢掉；
+    # 现在宁可漏过滤几条噪声，也不能误删真正的维护步骤。
+    first_line = stripped.splitlines()[0].strip()
+    if len(first_line) > 30:
+        return False
+    return any(marker in first_line for marker in _NOISE_MARKERS)
 
 
 def _looks_like_table(text: str) -> bool:

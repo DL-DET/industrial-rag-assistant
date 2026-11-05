@@ -55,6 +55,23 @@ def test_build_documents_skips_toc_and_preface():
     assert all("使用建议" not in document.page_content for document in documents)
 
 
+def test_noise_filter_keeps_section_when_marker_appears_midbody():
+    """正文里出现“使用建议”不能导致整节维护内容被丢掉。"""
+    documents = build_parent_child_documents(
+        text=(
+            "[第 1 页]\n1 日常维护\n"
+            "每 500 小时更换轴承润滑油。\n"
+            "使用建议：高温环境下缩短到 300 小时。"
+        ),
+        source="手册.pdf",
+        doc_id="doc-keep",
+        create_time="2026-11-04 12:00:00",
+    )
+
+    assert documents
+    assert any("轴承润滑油" in document.page_content for document in documents)
+
+
 def test_build_parent_child_documents_sets_parent_metadata():
     documents = build_parent_child_documents(
         text="[第 3 页]\n1 设备概述\n" + "甲" * 900,

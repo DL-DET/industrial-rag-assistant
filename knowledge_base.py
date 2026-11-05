@@ -52,6 +52,27 @@ def save_md5(md5_str: str) -> None:
         file.write(f"{md5_str}\n")
 
 
+def drop_md5(md5_str: str) -> None:
+    """移除内容指纹。
+
+    删除资料时必须同步清理，否则向量已经删掉、指纹还在，
+    重新上传同一份文件会被 check_md5 判成“已存在”跳过，资料再也加不回来。
+    """
+    md5_path = Path(config.md5_path)
+    if not md5_path.exists():
+        return
+
+    lines = [line.strip() for line in md5_path.read_text(encoding="utf-8").splitlines()]
+    kept = [line for line in lines if line and line != md5_str]
+    if len(kept) == len([line for line in lines if line]):
+        return
+
+    md5_path.write_text(
+        "\n".join(kept) + ("\n" if kept else ""),
+        encoding="utf-8",
+    )
+
+
 def get_string_md5(input_str: str, encoding: str = "utf-8") -> str:
     """计算内容指纹；这里仅用于去重，不用于安全校验。"""
     return hashlib.md5(
@@ -129,16 +150,24 @@ class KnowledgeBaseService:
         )
 
     def delete_by_source(self, filename: str) -> int:
-        ids, _ = self._source_state(filename)
-        if ids:
-            self.chroma.delete(ids=ids)
+        data = self.chroma.get(where={"source": filename})
+        ids = data.get("ids") or []
+        if not ids:
+            return 0
+        self.chroma.delete(ids=ids)
+        # doc_id 当前就是内容指纹，删向量后要一起清掉，否则重新上传会被判重跳过。
+        for metadata in data.get("metadatas") or []:
+            if metadata and metadata.get("doc_id"):
+                drop_md5(str(metadata["doc_id"]))
         return len(ids)
 
     def delete_by_doc_id(self, doc_id: str) -> int:
         data = self.chroma.get(where={"doc_id": doc_id})
         ids = data.get("ids") or []
-        if ids:
-            self.chroma.delete(ids=ids)
+        if not ids:
+            return 0
+        self.chroma.delete(ids=ids)
+        drop_md5(doc_id)
         return len(ids)
 
     def upload_by_str(self, data: str, filename: str) -> IngestResult:

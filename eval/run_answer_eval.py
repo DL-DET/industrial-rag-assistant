@@ -13,7 +13,7 @@ from typing import Any
 
 import config_data as config
 from citation import add_citations
-from eval.answer_metrics import evaluate_answer, threshold_table
+from eval.answer_metrics import evaluate_answer, is_refusal, threshold_table
 from eval.faithfulness import judge_faithfulness
 from rag import REFUSAL_ANSWER, RagService, should_refuse
 
@@ -241,8 +241,15 @@ def main() -> None:
         metrics = evaluate_answer(item, answer, trace.top_sources)
 
         # 拒答题没有结论，不参与忠实度判定。
+        # 这里还要排除“模型自己拒答”：否则一份全是拒答的回答能拿满分忠实度。
+        # 模型误拒已经由 answerable_refusal_rate 单独统计，不在这里重复计分。
         judgement = None
-        if args.judge and item["answerable"] and not refused_route:
+        if (
+            args.judge
+            and item["answerable"]
+            and not refused_route
+            and not is_refusal(answer)
+        ):
             judgement = judge_faithfulness(item["question"], answer, documents)
         record = {
             "id": item["id"],

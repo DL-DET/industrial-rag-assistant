@@ -80,6 +80,12 @@ def main() -> None:
     print(f"参与对比：{result['compared']} 条")
     if result["skipped"]:
         print(f"judge 判定失败跳过：{result['skipped']} 条")
+    if result["agreement_rate"] is None:
+        print(
+            "一致率：无可比样本"
+            "（人工标注与 judge 结果没有交集，或 judge 全部判定失败）"
+        )
+        return
     print(f"一致率：{result['agreement_rate']:.3f}")
 
     print("\n混淆矩阵：")

@@ -81,6 +81,27 @@ def test_md5_changes_with_content():
     assert get_string_md5("风机 A") != get_string_md5("风机 B")
 
 
+def test_drop_md5_removes_only_matching_line(tmp_path, monkeypatch):
+    state_path = tmp_path / "md5_text"
+    monkeypatch.setattr(config, "md5_path", state_path)
+    save_md5("aaa")
+    save_md5("bbb")
+
+    kb.drop_md5("aaa")
+
+    lines = state_path.read_text(encoding="utf-8").split()
+    assert lines == ["bbb"]
+
+
+def test_drop_md5_is_safe_when_missing(tmp_path, monkeypatch):
+    state_path = tmp_path / "md5_text"
+    monkeypatch.setattr(config, "md5_path", state_path)
+
+    kb.drop_md5("not-exist")   # 文件不存在也不能报错
+
+    assert not state_path.exists()
+
+
 def test_split_text_by_page_keeps_page_numbers():
     sections = split_text_by_page("前言\n[第 1 页]\n甲\n[第 2 页]\n乙")
 
@@ -204,3 +225,35 @@ def test_delete_by_source_removes_all_chunks(monkeypatch):
 
     assert removed >= 1
     assert chroma.texts == []
+
+
+def test_delete_by_source_clears_md5_so_it_can_be_reuploaded(tmp_path, monkeypatch):
+    """删资料时不清 md5，会导致重新上传被判重跳过，资料再也加不回来。"""
+    state_path = tmp_path / "md5_text"
+    monkeypatch.setattr(config, "md5_path", state_path)
+    chroma = FakeChroma()
+    service = _make_service(chroma)
+
+    service.upload_by_str("[第 1 页]\n甲内容", "手册.pdf")
+    fingerprint = get_string_md5("[第 1 页]\n甲内容".strip())
+    assert check_md5(fingerprint) is True
+
+    service.delete_by_source("手册.pdf")
+    assert check_md5(fingerprint) is False
+
+    result = service.upload_by_str("[第 1 页]\n甲内容", "手册.pdf")
+    assert result.status == "success"
+
+
+def test_delete_by_doc_id_clears_md5(tmp_path, monkeypatch):
+    state_path = tmp_path / "md5_text"
+    monkeypatch.setattr(config, "md5_path", state_path)
+    chroma = FakeChroma()
+    service = _make_service(chroma)
+
+    service.upload_by_str("[第 1 页]\n乙内容", "规范.pdf")
+    doc_id = get_string_md5("[第 1 页]\n乙内容".strip())
+
+    service.delete_by_doc_id(doc_id)
+
+    assert check_md5(doc_id) is False

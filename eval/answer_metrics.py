@@ -29,13 +29,18 @@ UNIT_ALIASES = (
 FILLER_WORDS = ("是否", "的", "进行", "大约", "左右", "有")
 
 
+# 模型经常用 Markdown 强调关键词，符号会把关键词从中间劈开。
+_MARKDOWN_MARKS = re.compile(r"[*`]+")
+
+
 def normalize(text: str) -> str:
     """评测匹配前的文本归一化。
 
-    只做确定性的等价变换：全角转半角、小写、去空白、单位统一。
+    只做确定性的等价变换：全角转半角、小写、去 Markdown 标记、去空白、单位统一。
     不用模糊或语义匹配：宁可留下少量假阴性，也不能让假阳性污染指标。
     """
     text = unicodedata.normalize("NFKC", text).lower()
+    text = _MARKDOWN_MARKS.sub("", text)
     text = re.sub(r"\s+", "", text)
     for alias, canonical in UNIT_ALIASES:
         text = text.replace(alias, canonical)
@@ -100,8 +105,15 @@ def threshold_table(
     records: list[dict[str, Any]],
     thresholds: list[float],
 ) -> list[dict[str, Any]]:
-    answerable = [record for record in records if record["answerable"]]
-    unanswerable = [record for record in records if not record["answerable"]]
+    # 阈值只对重排分有意义；降级路径的 top_score 是向量相似度，
+    # 混进来会算出和线上 should_refuse 不一致的结论。
+    usable = [
+        record
+        for record in records
+        if record.get("rerank_status") == "success"
+    ]
+    answerable = [record for record in usable if record["answerable"]]
+    unanswerable = [record for record in usable if not record["answerable"]]
     rows: list[dict[str, Any]] = []
     for threshold in thresholds:
         false_refusal = sum(

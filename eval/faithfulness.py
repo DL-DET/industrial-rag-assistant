@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 
@@ -36,6 +37,7 @@ SYSTEM_PROMPT = """你是工业设备知识库的审核员。判断【答案】�
 
 JSON_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
 
+logger = logging.getLogger(__name__)
 _JUDGE_MODEL = None
 
 
@@ -76,11 +78,20 @@ def parse_judgement(text: str) -> FaithfulnessResult | None:
         return None
     if not isinstance(data, dict) or "supported" not in data:
         return None
+    # 不能用 bool()：字符串 "false" 会被转成 True，把方向说反的答案判成忠实。
+    supported = data["supported"]
+    if isinstance(supported, str):
+        normalized = supported.strip().lower()
+        if normalized in {"true", "false"}:
+            supported = normalized == "true"
+    if not isinstance(supported, bool):
+        return None
+
     claims = data.get("unsupported_claims") or []
     if not isinstance(claims, list):
         claims = [str(claims)]
     return FaithfulnessResult(
-        supported=bool(data["supported"]),
+        supported=supported,
         unsupported_claims=[str(claim) for claim in claims],
         reason=str(data.get("reason", "")),
     )
@@ -97,12 +108,18 @@ def judge_faithfulness(
         return FaithfulnessResult(supported=True, reason="拒答，无结论可判定")
 
     client = model if model is not None else _get_model()
-    response = client.invoke(
-        [
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=build_prompt(question, answer, documents)),
-        ]
-    )
+    try:
+        response = client.invoke(
+            [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=build_prompt(question, answer, documents)),
+            ]
+        )
+    except Exception as exc:
+        # 网络抖动或限流不能中断整轮评测：返回“判定失败”，由调用方单独统计。
+        logger.warning("忠实度判定调用失败：%s", exc)
+        return FaithfulnessResult(supported=None, reason=f"判定调用失败：{exc}")
+
     text = response.content if isinstance(response.content, str) else str(response.content)
     parsed = parse_judgement(text)
     if parsed is None:

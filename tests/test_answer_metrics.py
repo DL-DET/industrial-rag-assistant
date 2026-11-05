@@ -24,6 +24,11 @@ def test_keyword_coverage_allows_filler_inside_compound():
     assert keyword_coverage("张紧装置应保留至少1/2的行程", ["1/2 行程"]) == 1.0
 
 
+def test_keyword_coverage_ignores_markdown_marks():
+    """模型用 ** 强调关键词时，符号不能把关键词劈开造成假阴性。"""
+    assert keyword_coverage("张紧装置应保留至少 **1/2** 的行程", ["1/2 行程"]) == 1.0
+
+
 def test_keyword_coverage_still_rejects_missing_keyword():
     """放宽匹配不能变成万能匹配：没提到就该判 0。"""
     assert keyword_coverage("基础混凝土强度不低于C20。", ["5 mm"]) == 0.0
@@ -66,10 +71,10 @@ def test_evaluate_unanswerable_item():
 
 def test_threshold_table_tradeoff():
     records = [
-        {"answerable": True, "top_score": 0.8},
-        {"answerable": True, "top_score": 0.4},
-        {"answerable": False, "top_score": 0.6},
-        {"answerable": False, "top_score": 0.3},
+        {"answerable": True, "top_score": 0.8, "rerank_status": "success"},
+        {"answerable": True, "top_score": 0.4, "rerank_status": "success"},
+        {"answerable": False, "top_score": 0.6, "rerank_status": "success"},
+        {"answerable": False, "top_score": 0.3, "rerank_status": "success"},
     ]
 
     rows = threshold_table(records, [0.5, 0.7])
@@ -78,3 +83,16 @@ def test_threshold_table_tradeoff():
     assert rows[0]["unanswerable_refusal_rate"] == 0.5
     assert rows[1]["answerable_false_refusal_rate"] == 0.5
     assert rows[1]["unanswerable_refusal_rate"] == 1.0
+
+
+def test_threshold_table_ignores_degraded_scores():
+    """降级路径的 top_score 是向量相似度，混进来会和线上判定口径不一致。"""
+    records = [
+        {"answerable": True, "top_score": 0.9, "rerank_status": "success"},
+        {"answerable": False, "top_score": 0.2, "rerank_status": "fallback"},
+    ]
+
+    rows = threshold_table(records, [0.5])
+
+    assert rows[0]["answerable_false_refusal_rate"] == 0.0
+    assert rows[0]["unanswerable_refusal_rate"] == 0.0
