@@ -7,7 +7,7 @@
 {"id": "q13", "faithful": true, "reason": "500V 摇表测绝缘电阻 ≥10MΩ，属每半年项，与原文一致"}
 {"id": "q14", "faithful": false, "reason": "原文中“500V 摇表测绝缘电阻 ≥10MΩ”是每半年项目，答案把它归入“每年保养”，时间周期错配"}
 {"id": "q15", "faithful": true, "reason": "振动超标的四项原因与四项处理均与原文一致"}
-{"id": "q16", "faithful": true, "reason": "轴承温度过高的四项原因与两项处理均与原文一致"}
+{"id": "q16", "faithful": false, "reason": "四项原因与两项处理与原文一致，但答案额外补充“资料中提供的是风机通用方法，适用于4-72等常规风机”，原文没有这个适用范围的说明"}
 {"id": "q21", "faithful": true, "reason": "电机过热的原因与处理与原文一致"}
 {"id": "q26", "faithful": true, "reason": "LOTO 六个步骤均能在三段原文中找到，标注来源正确"}
 {"id": "q27", "faithful": true, "reason": "紧急停机、上报主管、禁止强行生产，三条与原文一致"}

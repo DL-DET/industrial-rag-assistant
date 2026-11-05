@@ -113,7 +113,7 @@ refusal_enabled = os.getenv("REFUSAL_ENABLED", "true").strip().lower() in {
 }
 refusal_score_threshold = _read_positive_float("REFUSAL_SCORE_THRESHOLD", 0.75)
 embedding_model_name = os.getenv("EMBEDDING_MODEL_NAME", "text-embedding-v4")
-chat_model_name = os.getenv("CHAT_MODEL_NAME", "qwen-max")
+chat_model_name = os.getenv("CHAT_MODEL_NAME", "qwen3.7-max")
 
 # 上传限制
 max_upload_size_mb = _read_positive_int("MAX_UPLOAD_SIZE_MB", 10)
