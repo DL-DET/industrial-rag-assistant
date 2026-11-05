@@ -11,6 +11,23 @@
 
 ![工业设备 RAG 智能客服界面](docs/ui-preview.png)
 
+![依据不足时跳过生成](docs/ui-refusal.png)
+
+## 最终成绩单
+
+| 维度 | 指标 | 数值 |
+| --- | --- | ---: |
+| 检索（100 条） | recall@1 / recall@3 / MRR | 0.987 / 1.000 / 0.993 |
+| 答案（test 44 条） | 关键词覆盖 / 全部命中 | 1.000 / 1.000 |
+| 可追溯 | 回答引用来源率 | 1.000 |
+| 拒答 | Precision / Recall | 1.000 / 0.917 |
+| 忠实度 | LLM 复查通过 | 32 / 32 |
+| 效率 | 无答案问题延迟降幅 | 86.3% |
+| 工程 | 自动化测试 / CI | 113 个 / Python 3.11 + 3.13 |
+
+> 说明：关键词指标包含一次评测口径修正（0.906 → 1.000，模型未变），引用率提升来自后处理补全，
+> 详见「评测修正与引用补全」。这两项不是模型能力提升，读数字时请分开看。
+
 ## 功能
 
 - 支持 TXT、PDF、DOCX 文档入库
@@ -29,7 +46,11 @@
 - 每次查询写入 trace：耗时、候选数、fallback 状态与来源，便于排查和统计
 - 100 条评测集支持 recall@1/3/5、MRR 与延迟统计，报告可复现
 - 资料不足时明确拒答，不编造设备参数或检修步骤
-- 文件解析、会话隔离、去重逻辑、重排降级和上下文格式化包含自动化测试
+- 生成前拒答路由：重排分低于阈值直接返回拒答文案，不调用生成模型
+- 拒答只认重排分；重排降级时不做分数判断，避免混用向量相似度尺度
+- 答案引用自动补全：把裸 `[资料 N]` 补成 `[资料 N：文件名]`，保证可追溯
+- LLM 忠实度判定：复查答案结论是否被检索原文支持，覆盖关键词指标查不出的逻辑错误
+- 文件解析、会话隔离、去重逻辑、重排降级、拒答判断、引用补全和上下文格式化包含自动化测试
 
 ## 评测基线（原始语料）
 
@@ -448,18 +469,27 @@ python scripts/split_dataset.py
 ## 架构
 
 ```mermaid
-flowchart LR
-    A[上传 TXT / PDF / DOCX] --> B[文本提取与章节切分]
-    B --> P[父子块切分]
-    P --> C[内容指纹去重]
-    C --> D[DashScope Embedding]
-    D --> E[(Chroma 向量库)]
-    F[用户问题] --> G[向量召回 Top-10]
-    E --> G
-    G --> R[qwen3.7-text-rerank 重排]
-    R --> H[上下文 + 会话历史]
-    H --> I[通义千问]
-    I --> J[流式答案 + 来源]
+flowchart TB
+    subgraph ingest["入库链路"]
+        A[上传 TXT / PDF / DOCX] --> B[文本提取与章节切分]
+        B --> C[目录 / 前言清洗]
+        C --> P[父子块：child 300 / parent 800]
+        P --> D[DashScope Embedding]
+        D --> E[(Chroma 向量库)]
+    end
+
+    subgraph qa["问答链路"]
+        F[用户问题] --> G[向量召回 Top-10]
+        E --> G
+        G --> R[qwen3.7 重排 → Top-3]
+        R --> S{top_score < 0.75 ?}
+        S -->|是| X[拒答：不调用生成模型]
+        S -->|否| H[父块展开 + 上下文组装]
+        R -.重排熔断/降级.-> H
+        H --> I[通义千问流式生成]
+        I --> J[引用补全]
+        J --> K[答案 + 来源追溯]
+    end
 ```
 
 ## 项目结构
@@ -467,25 +497,30 @@ flowchart LR
 ```text
 .
 ├── app.py                  # Streamlit 单入口
-├── app_qa.py               # 智能问答页面
+├── app_qa.py               # 智能问答页面：检索、拒答、生成、来源展示
 ├── app_file_upload.py      # 知识库更新页面
 ├── ui_theme.py             # 蓝图工程档案主题和页面视觉组件
 ├── file_parsers.py         # TXT / PDF / DOCX 文本提取
-├── chunking.py             # 章节感知的父子块切分
-├── knowledge_base.py       # 文档入库、向量化和去重
-├── rag.py                  # 检索、Prompt、模型与流式链路
-├── rerank.py               # DashScope 文本重排
-├── hybrid.py               # BM25 + 向量 RRF 混合检索（评测用）
-├── query_decompose.py      # 多部分问题规则拆解（评测用）
+├── chunking.py             # 章节感知的父子块切分与目录清洗
+├── knowledge_base.py       # 文档入库、向量化、去重与版本管理
+├── rag.py                  # 检索、重排、拒答路由、Prompt 与流式链路
+├── rerank.py               # DashScope 文本重排（超时 + 熔断）
+├── citation.py             # 答案引用补全：[资料 N] → [资料 N：文件名]
 ├── observability.py        # 查询 trace 与 JSONL 日志
 ├── vector_stores.py        # Chroma 向量库适配
 ├── file_history_store.py   # 本地会话历史
 ├── config_data.py          # 环境变量和路径配置
+├── hybrid.py               # BM25 + 向量 RRF 混合检索（评测用，未接入）
+├── query_decompose.py      # 多部分问题规则拆解（评测用，未接入）
 ├── data/                   # 示例知识库原始资料
 │   └── archive/            # 旧版重复 DOCX，保留用于复现实验
-├── eval/                   # 评测集、检索指标与基线报告
-├── scripts/                # 独立评测语料构建脚本
-├── docs/                   # README 界面预览
+├── eval/                   # 评测集、检索指标、答案指标与基线报告
+│   ├── metrics.py          # recall@k、MRR、延迟统计
+│   ├── answer_metrics.py   # 关键词覆盖、引用、拒答与阈值扫描
+│   ├── faithfulness.py     # LLM 忠实度判定
+│   └── run_*.py            # 检索评测与答案级评测入口
+├── scripts/                # 评测集构建、数据划分、判定器自检
+├── docs/                   # 界面预览、优化待办与演示脚本
 └── tests/                  # 自动化测试
 ```
 
