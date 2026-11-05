@@ -380,6 +380,45 @@ python -m eval.run_answer_eval --dataset eval/dataset_v2_test.jsonl \
 python -m eval.run_answer_eval --answerable-limit 75 --unanswerable-limit 25
 ```
 
+### 忠实度判定（P025）
+
+关键词指标只能查“这几个字出现了没有”，查不出逻辑错误：
+
+```text
+方向说反   问“不高于 70℃”，答“应高于 70℃”     → 关键词全中，实际错
+数字改错   5% 答成 15%                          → 关键词全中，实际错
+凭空补充   资料没说的自己加一段                   → 关键词全中，实际错
+```
+
+所以加了 LLM 复查：把问题、答案和本次检索到的原文一起交给模型，让它只判断一件事——答案里的结论能否在原文中找到直接依据。
+
+```bash
+python -m eval.run_answer_eval --dataset eval/dataset_v2_test.jsonl \
+  --answerable-limit 100 --unanswerable-limit 100 --judge \
+  --report eval/answer_report_test_judge.md \
+  --results eval/answer_results_test_judge.jsonl
+```
+
+`--judge` 默认关闭，不开就是原来那套指标，保证可复现。
+
+test 集结果：32 道有答案题全部判定为忠实，判定理由逐条给出。
+
+**判定器本身也需要验证。** 全部判“忠实”可能只是判定器太宽松，所以用篡改样本做自检：
+
+```bash
+python scripts/judge_smoke.py
+```
+
+```text
+[OK] 忠实版：  supported=True
+[OK] 方向说反：supported=False — 资料规定不高于70℃，而非高于70℃
+[OK] 数字改错：supported=False — 资料是带宽的5%，而非15%
+[OK] 凭空补充：supported=False — 换润滑脂在参考资料中没有依据
+4/4 个用例符合预期
+```
+
+**这个指标只能当第二把尺子。** 判定本身也是模型，也会错。它的价值是帮你找出可疑样本，不是给你一个绝对准确的正确率。
+
 ### dev/test 划分
 
 ```bash

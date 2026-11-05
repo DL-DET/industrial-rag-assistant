@@ -14,6 +14,7 @@ from typing import Any
 import config_data as config
 from citation import add_citations
 from eval.answer_metrics import evaluate_answer, threshold_table
+from eval.faithfulness import judge_faithfulness
 from rag import REFUSAL_ANSWER, RagService, should_refuse
 
 
@@ -48,6 +49,8 @@ def _preview(text: str, limit: int = 160) -> str:
 def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     answerable = [record for record in records if record["answerable"]]
     unanswerable = [record for record in records if not record["answerable"]]
+    # 判定失败（faithful 为 None）的题不进入分母，避免污染忠实度指标。
+    judged = [record for record in answerable if record.get("faithful") is not None]
 
     def mean(values: list[float]) -> float:
         return sum(values) / len(values) if values else 0.0
@@ -79,6 +82,12 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "unanswerable_route_refusal_rate": mean(
             [1.0 if record["refusal_route"] else 0.0 for record in unanswerable]
         ),
+        "judged_count": len(judged),
+        "faithful_rate": (
+            mean([1.0 if record["faithful"] else 0.0 for record in judged])
+            if judged
+            else None
+        ),
         "thresholds": threshold_table(records, THRESHOLDS),
     }
 
@@ -91,6 +100,7 @@ def render_report(summary: dict[str, Any], records: list[dict[str, Any]]) -> str
         f"- 样本：有答案 {summary['answerable']} / 无答案 {summary['unanswerable']}",
         f"- 拒答路由：{'开启' if config.refusal_enabled else '关闭'}"
         f"，阈值 {config.refusal_score_threshold:.2f}（仅对重排分生效）",
+        f"- 忠实度判定：{'开启，判定 ' + str(summary['judged_count']) + ' 道' if summary['judged_count'] else '未开启'}",
         "",
         "## 汇总",
         "",
@@ -104,12 +114,40 @@ def render_report(summary: dict[str, Any], records: list[dict[str, Any]]) -> str
         f"| 无答案正确拒答率 | {summary['unanswerable_refusal_rate']:.3f} |",
         f"| 有答案路由拒答率 | {summary['answerable_route_refusal_rate']:.3f} |",
         f"| 无答案路由拒答率 | {summary['unanswerable_route_refusal_rate']:.3f} |",
-        "",
-        "## 拒答阈值扫描（仅按 Top-1 分数模拟）",
-        "",
-        "| 阈值 | 有答案误拒答率 | 无答案拒答率 |",
-        "| ---: | ---: | ---: |",
     ]
+
+    if summary["judged_count"]:
+        lines.extend(
+            [
+                "",
+                "## 忠实度判定（LLM 复查答案是否被原文支持）",
+                "",
+                f"- 判定样本：{summary['judged_count']} 道有答案题，拒答不参与",
+                f"- 结论有原文支持的比例：{summary['faithful_rate']:.3f}",
+                "",
+                "| ID | 是否忠实 | 无依据的结论 | 判定理由 |",
+                "| --- | --- | --- | --- |",
+            ]
+        )
+        for record in records:
+            if record.get("faithful") is None:
+                continue
+            claims = "；".join(record.get("unsupported_claims") or []) or "—"
+            verdict = "是" if record["faithful"] else "否"
+            lines.append(
+                f"| {record['id']} | {verdict} | {claims} | "
+                f"{record.get('judge_reason', '')} |"
+            )
+
+    lines.extend(
+        [
+            "",
+            "## 拒答阈值扫描（仅按 Top-1 分数模拟）",
+            "",
+            "| 阈值 | 有答案误拒答率 | 无答案拒答率 |",
+            "| ---: | ---: | ---: |",
+        ]
+    )
     for row in summary["thresholds"]:
         lines.append(
             f"| {row['threshold']:.1f} | "
@@ -155,6 +193,11 @@ def main() -> None:
         action="store_true",
         help="关闭拒答路由，只让模型自行判断是否有依据",
     )
+    parser.add_argument(
+        "--judge",
+        action="store_true",
+        help="用 LLM 复查答案结论是否被检索原文支持（忠实度）",
+    )
     args = parser.parse_args()
 
     # 评测和线上共用同一份判断逻辑，这里只临时覆盖配置，不改代码路径。
@@ -196,6 +239,11 @@ def main() -> None:
         # 和应用走同一条补全逻辑，保证评测看到的引用和线上一致。
         answer = add_citations(answer, documents)
         metrics = evaluate_answer(item, answer, trace.top_sources)
+
+        # 拒答题没有结论，不参与忠实度判定。
+        judgement = None
+        if args.judge and item["answerable"] and not refused_route:
+            judgement = judge_faithfulness(item["question"], answer, documents)
         record = {
             "id": item["id"],
             "question": item["question"],
@@ -205,6 +253,11 @@ def main() -> None:
             "sources": trace.top_sources,
             "answer_preview": _preview(answer),
             "refusal_route": refused_route,
+            "faithful": None if judgement is None else judgement.supported,
+            "unsupported_claims": (
+                [] if judgement is None else judgement.unsupported_claims
+            ),
+            "judge_reason": "" if judgement is None else judgement.reason,
             **metrics,
         }
         records.append(record)
@@ -214,6 +267,7 @@ def main() -> None:
             f"score={record['top_score']} "
             f"route_refusal={refused_route} "
             f"coverage={record['coverage']} "
+            f"faithful={record['faithful']} "
             f"refusal={record['refusal']}"
         )
 
