@@ -2,12 +2,12 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import config_data as config
 import knowledge_base as kb
+from chunking import split_text_by_page
 from knowledge_base import (
     KnowledgeBaseService,
     check_md5,
     get_string_md5,
     save_md5,
-    split_text_by_page,
 )
 
 

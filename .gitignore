@@ -28,9 +28,8 @@ md5_text*
 logs/
 *.log
 
-# 评测原始结果与实验报告（基线 report.md 保留）
+# 逐题检索明细体积较大，不提交；评测报告作为实验证据保留在仓库中
 eval/results*.jsonl
-eval/report_*.md
 
 # 系统文件
 .DS_Store

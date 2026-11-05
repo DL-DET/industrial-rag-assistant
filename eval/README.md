@@ -43,6 +43,33 @@ python -m eval.run_eval --decompose --rerank --rerank-top-n 5
 python -m eval.run_answer_eval --answerable-limit 15 --unanswerable-limit 10
 ```
 
+完整 test 集（32 有答案 + 12 无答案），并开启忠实度判定：
+
+```bash
+python -m eval.run_answer_eval --dataset eval/dataset_v2_test.jsonl \
+  --answerable-limit 100 --unanswerable-limit 100 --judge \
+  --report eval/answer_report_test_judge.md \
+  --results eval/answer_results_test_judge.jsonl
+```
+
+拒答路由对照实验：默认开启，`--no-refusal` 关闭，`--refusal-threshold` 临时覆盖阈值。
+
+```bash
+python -m eval.run_answer_eval --dataset eval/dataset_v2_test.jsonl \
+  --answerable-limit 100 --unanswerable-limit 100 --no-refusal \
+  --report eval/answer_report_test_noroute.md \
+  --results eval/answer_results_test_noroute.jsonl
+```
+
+判定器校准：对比 LLM 忠实度判定与 `human_labels.jsonl` 的人工标注。
+
+```bash
+python scripts/calibrate_judge.py
+```
+
+输出一致率、混淆矩阵和分歧明细。人工标注时只看问题、答案和检索原文，
+不看 judge 结果；判定标准按数字、单位、方向词、是否超资料内容四项机械执行。
+
 划分 dev/test：
 
 ```bash
@@ -105,9 +132,16 @@ python -m eval.run_eval --dataset eval/dataset_dedup.jsonl --label dedup_rerank 
 1. 来源文件属于 `gold_sources`
 2. 正文包含 `gold_keywords` 中的**全部**关键词
 
-匹配前会去掉正文和关键词中的空白字符，避免 PDF 在“介质温度”中间插入换行
-导致假阴性。原始语料同时存在 DOCX 和 PDF，正文等价但页码不同，因此用
-关键词匹配，避免等价来源被误判。
+匹配前会做确定性归一化：NFKC 全角转半角、转小写、去空白、单位统一
+（毫米→mm、千瓦→kw 等）。关键词按字符构造正则，允许字间夹虚词
+（是否 / 的 / 进行 / 大约 / 左右 / 有），避免“叶轮是否有腐蚀”漏掉关键词
+“叶轮腐蚀”。
+
+只做确定性等价变换，不做模糊或语义匹配：宁可保留少量假阴性，也不能让
+假阳性污染指标（“有腐蚀”和“没有腐蚀”字面接近，语义相反）。
+
+原始语料同时存在 DOCX 和 PDF，正文等价但页码不同，因此用关键词匹配，
+避免等价来源被误判。
 
 ## 输出
 

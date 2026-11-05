@@ -37,7 +37,7 @@ jobs:
           python -m pip install -r requirements-dev.txt
 
       - name: Compile Python files
-        run: python -m compileall -q app.py app_qa.py app_file_upload.py config_data.py file_history_store.py file_parsers.py knowledge_base.py rag.py ui_theme.py vector_stores.py
+        run: python -m compileall -q .
 
       - name: Run tests
         run: python -m pytest -q

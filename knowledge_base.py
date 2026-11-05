@@ -14,7 +14,7 @@ from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import config_data as config
-from chunking import build_parent_child_documents, split_text_by_page
+from chunking import build_parent_child_documents
 
 
 logger = logging.getLogger(__name__)
