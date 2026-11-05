@@ -10,6 +10,25 @@ def test_keyword_coverage_ignores_whitespace():
     assert keyword_coverage("介质温\n度 0~80℃", ["介质温度", "0~80"]) == 1.0
 
 
+def test_keyword_coverage_allows_filler_between_chars():
+    """“叶轮腐蚀”要能匹配“叶轮是否有腐蚀”，不能因为虚词判成漏答。"""
+    assert keyword_coverage("拆机检查叶轮是否有腐蚀现象", ["叶轮腐蚀"]) == 1.0
+
+
+def test_keyword_coverage_normalizes_units():
+    """“5 mm”和“5毫米”是同一条要求，单位写法不能造成假阴性。"""
+    assert keyword_coverage("位置偏差不超过5毫米", ["5 mm"]) == 1.0
+
+
+def test_keyword_coverage_allows_filler_inside_compound():
+    assert keyword_coverage("张紧装置应保留至少1/2的行程", ["1/2 行程"]) == 1.0
+
+
+def test_keyword_coverage_still_rejects_missing_keyword():
+    """放宽匹配不能变成万能匹配：没提到就该判 0。"""
+    assert keyword_coverage("基础混凝土强度不低于C20。", ["5 mm"]) == 0.0
+
+
 def test_refusal_markers():
     assert is_refusal("知识库中暂无足够依据。")
     assert not is_refusal("介质温度为 0~80℃。")

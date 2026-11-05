@@ -10,6 +10,7 @@ import streamlit as st
 from langchain_core.documents import Document
 
 import config_data as config
+from citation import add_citations
 from observability import QueryTrace, new_trace_id, write_trace
 from rag import (
     PAGE_MARKER_PATTERN,
@@ -266,9 +267,17 @@ def render() -> None:
                         yield chunk
 
                 generation_started = time.perf_counter()
-                st.write_stream(capture_stream())
+                stream_slot = st.empty()
+                with stream_slot.container():
+                    st.write_stream(capture_stream())
                 trace.generation_ms = (time.perf_counter() - generation_started) * 1000
                 answer = "".join(answer_chunks).strip()
+                cited = add_citations(answer, documents)
+                if cited != answer:
+                    # 流式阶段拿不到完整文本，引用补全只能在生成结束后重绘一次。
+                    stream_slot.empty()
+                    stream_slot.markdown(cited)
+                    answer = cited
                 trace.answer_chars = len(answer)
             _render_sources(sources)
             st.caption(f"TRACE #{trace.trace_id}")

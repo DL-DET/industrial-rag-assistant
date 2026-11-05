@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import config_data as config
+from citation import add_citations
 from eval.answer_metrics import evaluate_answer, threshold_table
 from rag import REFUSAL_ANSWER, RagService, should_refuse
 
@@ -192,6 +193,8 @@ def main() -> None:
                 session_id=session_id,
                 documents=documents,
             )
+        # 和应用走同一条补全逻辑，保证评测看到的引用和线上一致。
+        answer = add_citations(answer, documents)
         metrics = evaluate_answer(item, answer, trace.top_sources)
         record = {
             "id": item["id"],
