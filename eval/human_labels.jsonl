@@ -1,0 +1,20 @@
+{"id": "q01", "faithful": true, "reason": "介质温度 0~80℃ 与原文一致"}
+{"id": "q02", "faithful": true, "reason": "固体颗粒直径 ≤10mm 与原文一致"}
+{"id": "q04", "faithful": true, "reason": "进出口法兰加装橡胶垫片防止渗漏，与原文一致"}
+{"id": "q06", "faithful": true, "reason": "运行满 500 小时更换轴承润滑油，与原文一致"}
+{"id": "q10", "faithful": true, "reason": "风量 1500~50000m³/h、全压 200~3200Pa、温度 ≤80℃ 三项均与原文一致"}
+{"id": "q11", "faithful": true, "reason": "切断电源、LOTO 验电、禁止带电开盖、远离叶轮皮带，四条均可在原文找到"}
+{"id": "q13", "faithful": true, "reason": "500V 摇表测绝缘电阻 ≥10MΩ，属每半年项，与原文一致"}
+{"id": "q14", "faithful": false, "reason": "原文中“500V 摇表测绝缘电阻 ≥10MΩ”是每半年项目，答案把它归入“每年保养”，时间周期错配"}
+{"id": "q15", "faithful": true, "reason": "振动超标的四项原因与四项处理均与原文一致"}
+{"id": "q16", "faithful": true, "reason": "轴承温度过高的四项原因与两项处理均与原文一致"}
+{"id": "q21", "faithful": true, "reason": "电机过热的原因与处理与原文一致"}
+{"id": "q26", "faithful": true, "reason": "LOTO 六个步骤均能在三段原文中找到，标注来源正确"}
+{"id": "q27", "faithful": true, "reason": "紧急停机、上报主管、禁止强行生产，三条与原文一致"}
+{"id": "q29", "faithful": true, "reason": "案例 2 的原因、处理与后续建议均与原文一致"}
+{"id": "c01", "faithful": true, "reason": "带速 1.6 m/s、输送能力 200 t/h 与原文一致"}
+{"id": "c02", "faithful": true, "reason": "电机 30 kW、减速机 DCY250 与原文一致"}
+{"id": "c04", "faithful": true, "reason": "跑偏量 5%（40mm）、轴承温度 70℃ 与原文一致"}
+{"id": "c06", "faithful": true, "reason": "跑偏五项原因与原文一致"}
+{"id": "c07", "faithful": true, "reason": "打滑原因与处理均与原文一致"}
+{"id": "c08", "faithful": true, "reason": "切断电源、挂牌上锁、验电三步与原文一致"}

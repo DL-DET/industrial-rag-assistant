@@ -251,6 +251,7 @@ def main() -> None:
             "top_score": round(trace.top_score, 4) if trace.top_score is not None else None,
             "rerank_status": trace.rerank_status,
             "sources": trace.top_sources,
+            "answer": answer,
             "answer_preview": _preview(answer),
             "refusal_route": refused_route,
             "faithful": None if judgement is None else judgement.supported,
