@@ -23,7 +23,7 @@
 | 拒答 | Precision / Recall | 1.000 / 0.917 |
 | 忠实度 | LLM 复查通过 | 31 / 32 |
 | 效率 | 无答案问题延迟降幅 | 86.3% |
-| 工程 | 自动化测试 / CI | 118 个 / Python 3.11 + 3.13 |
+| 工程 | 自动化测试 / CI | 135 个 / Python 3.11 + 3.13 |
 
 > 说明：关键词指标包含一次评测口径修正（0.906 → 1.000，模型未变），引用率提升来自后处理补全，
 > 详见「评测修正与引用补全」。这两项不是模型能力提升，读数字时请分开看。
@@ -534,6 +534,7 @@ flowchart TB
 ```text
 .
 ├── app.py                  # Streamlit 单入口
+├── api.py                  # FastAPI 服务：/chat、/chat/stream、/health
 ├── app_qa.py               # 智能问答页面：检索、拒答、生成、来源展示
 ├── app_file_upload.py      # 知识库更新页面
 ├── ui_theme.py             # 蓝图工程档案主题和页面视觉组件
@@ -611,6 +612,59 @@ streamlit run app.py
 项目目录中的 `data/` 已提供一份示例资料。重新建立本地知识库时，可以直接通过
 上传页面写入；随后删除 `chroma_db/` 和 `md5_text` 也可以从空知识库重新开始。
 
+## API 服务（FastAPI）
+
+除了 Streamlit 页面，项目提供一套最小 HTTP API，复用同一套 `RagService`，
+适合把问答能力接到 App、小程序或其他业务系统。
+
+### 启动
+
+```bash
+pip install -r requirements.txt
+uvicorn api:app --reload --port 8000
+```
+
+接口文档：<http://127.0.0.1:8000/docs>
+
+### 接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/health` | 检查 API Key 和向量库是否就绪，不调用模型 |
+| POST | `/chat` | 非流式问答，返回答案、来源和 trace |
+| POST | `/chat/stream` | SSE 流式问答：`meta` → `delta` → `done` |
+
+非流式调用：
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question":"离心风机怎么保养？","session_id":"demo-001"}'
+```
+
+流式调用：
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question":"离心风机怎么保养？","session_id":"demo-001"}'
+```
+
+流式事件说明：
+
+- `meta`：本次 `trace_id`、来源、是否拒答、是否降级
+- `delta`：增量 token
+- `done`：完整答案（已补引用）、来源和 trace 汇总
+- `error`：错误信息，带 `trace_id`
+
+拒答时只发送 `meta` 和 `done`，不调用生成模型，和页面逻辑一致。
+
+`session_id` 只允许字母、数字、下划线和短横线，长度 1–80；不传会自动生成。
+API 复用 `.env` 中的 `DASHSCOPE_API_KEY` 和本地 Chroma 知识库。
+
+> 这是演示级 API，没有登录、限流和鉴权，不要直接暴露公网。
+> 生产环境需要加反向代理、鉴权、限流、HTTPS 和并发压测。
+
 ## 配置
 
 所有可调参数都可以通过 `.env` 或系统环境变量覆盖：
@@ -656,8 +710,8 @@ python -m pytest -q
 ```
 
 测试不需要调用模型 API，覆盖文本编码、PDF/DOCX 解析、会话 ID 校验、历史读写、
-内容去重、RAG 上下文格式化、查询 trace、评测指标，以及问答页和上传页的
-Streamlit 启动。
+内容去重、RAG 上下文格式化、查询 trace、评测指标、FastAPI 接口（`/health`、
+`/chat`、`/chat/stream`），以及问答页和上传页的 Streamlit 启动。
 
 检索基线评测需要调用 Embedding API：
 
@@ -710,6 +764,7 @@ python scripts/qa_stats.py --log logs/qa.jsonl
 ## 已知限制
 
 - 当前是本地单进程演示版，没有登录、权限管理和数据库级会话隔离。
+- FastAPI 是演示级接口：没有鉴权、限流和 HTTPS，不要直接暴露公网；生产环境需要反向代理、密钥托管和并发压测。
 - Chroma 和聊天历史保存在本地磁盘，不适合直接部署为多实例生产服务。
 - 扫描版 PDF 尚未集成 OCR。
 - 已接入章节感知的父子块和“向量召回 + qwen3 重排”；BM25 混合检索已验证，但与重排不是简单叠加，暂未接入应用。
