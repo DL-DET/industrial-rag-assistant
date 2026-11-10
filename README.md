@@ -505,6 +505,11 @@ python scripts/split_dataset.py
 
 ## 架构
 
+![系统架构](docs/architecture.png)
+
+<details>
+<summary>可编辑版本（mermaid 源码）</summary>
+
 ```mermaid
 flowchart TB
     subgraph ingest["入库链路"]
@@ -523,11 +528,13 @@ flowchart TB
         S -->|是| X[拒答：不调用生成模型]
         S -->|否| H[父块展开 + 上下文组装]
         R -.重排熔断/降级.-> H
-        H --> I[通义千问流式生成]
+        H --> I[qwen3.7-max 流式生成]
         I --> J[引用补全]
         J --> K[答案 + 来源追溯]
     end
 ```
+
+</details>
 
 ## 项目结构
 
